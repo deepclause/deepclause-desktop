@@ -20,7 +20,7 @@ jobs:
           node-version: 22
 
       - name: download VM image
-        run: wget -o "vendor/v86/images/alpine.img https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=8ATWM8ZCOYZVY9CV3LXH%2F20251112%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251112T115654Z&X-Amz-Expires=43200&X-Amz-Signature=a5bd323efcfd26425380704ac0eb453c8a7b4a61adf14b72656bf451a4e00fd2&X-Amz-SignedHeaders=host&x-id=GetObject" 
+        run: wget -o vendor/v86/images/alpine.img "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=8ATWM8ZCOYZVY9CV3LXH%2F20251112%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251112T115654Z&X-Amz-Expires=43200&X-Amz-Signature=a5bd323efcfd26425380704ac0eb453c8a7b4a61adf14b72656bf451a4e00fd2&X-Amz-SignedHeaders=host&x-id=GetObject" 
 
       - name: Build/release Electron app
         uses: samuelmeuli/action-electron-builder@v1
