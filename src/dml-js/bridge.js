@@ -2126,10 +2126,19 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
             let dml_stringsLoad = resolver ? resolver.readDmlCore('dml_strings.pl') : fs.readFileSync('src/dml-core/dml_strings.pl');
             let plogchainLoad = resolver ? resolver.readDmlCore('plogchain.pl') : fs.readFileSync('src/dml-core/plogchain.pl');
 
-            await swipl.prolog.load_string(cmdlineLoad.toString(), '/wasm/cmdline.pl');
-            await swipl.prolog.load_string(plogchainLoad.toString(), '/wasm/plogchain.pl');
-            await swipl.prolog.load_string(dml_stringsLoad.toString(), '/wasm/dml_strings.pl');
+            
+            // if dev env: save the current state using qsave_program 
+            // and copy it to src/dml-core/mi.qsave
+            if (process.env.DML_DEV_MODE) {
+                await swipl.prolog.load_string(cmdlineLoad.toString(), '/wasm/cmdline.pl');
+                await swipl.prolog.load_string(plogchainLoad.toString(), '/wasm/plogchain.pl');
+                await swipl.prolog.load_string(dml_stringsLoad.toString(), '/wasm/dml_strings.pl');
 
+                
+                writeLog('Loaded Prolog modules in DML_DEV_MODE.');
+                console.log('DML_DEV_MODE: Loaded Prolog modules.');
+
+            } 
             writeLog('Loaded Prolog modules.');
 
             // Initialize cooperative execution engine using SWIPL
@@ -2143,15 +2152,18 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                 use_module(library(random)),
                 use_module(library(http/json)),
                 use_module(library(dicts)),
+    
                 read_file_to_string('${tempFile}', DMLCode, []),
                 writeln("Read code"),
                 %writeln(DMLCode),
-                cmdline:init_cooperative_engine(DMLCode, '${engineId}', '${memoryId}', Memory,  Params, Success, Error)
+                cmdline:init_cooperative_engine(DMLCode, '${engineId}', '${memoryId}', Memory,  Params, Success, Error).
+                
             `;
 
             writeLog(`Initialization query issued for engineId=${engineId}, memoryId=${memoryId}`);
 
             // Initialize cooperative execution engine
+            
             const initResult = await swipl.prolog.query(initQuery, {Memory: memory, Params: parameters}).next();
 
             if (!initResult || initResult.value.Success == 'false') {
@@ -2164,6 +2176,29 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
             yield "<log>DML engine initialized, starting cooperative execution...</log>\n";
             writeLog("DML engine initialized.");
+
+            if (process.env.DML_DEV_MODE) {
+                try {
+                    writeLog('DML_DEV_MODE is true, saving current Prolog state to mi.qsave');
+                   
+                    const saveResult = await swipl.prolog.query("qsave_program('mi.qsave', [autoload(true), verbose(true)]).    ").next();
+                    writeLog('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
+                    console.log('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
+                    
+                    const miData = swipl.FS.readFile('mi.qsave');
+                    fs.writeFileSync('src/dml-core/mi.qsave', miData);
+
+                    writeLog('Saved current Prolog state to src/dml-core/mi.qsave');
+                    console.log('DML_DEV_MODE: Saved current Prolog state to src/dml-core/mi.qsave');
+
+                } catch (e) {
+                    const msg = `Error saving Prolog state to src/dml-core/mi.qsave: ${e.message}\n`;
+                    writeLog(msg);
+                    console.log(msg);
+                    yield msg;
+                    return;
+                }
+            }
 
             // Main cooperative loop
             let iteration = 0;

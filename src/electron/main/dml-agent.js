@@ -199,8 +199,36 @@ async function runDmlCode(dmlCode, workspaceDir, {
     const shouldCleanupSwipl = !swipl;
     
     if (!swipl) {
-        swipl = await SWIPL({ arguments: ["-q"], on_output });
-        console.log("SWI-Prolog initialized");
+        try {
+            if (process.env.DML_DEV_MODE) {
+                swipl = await SWIPL({ 
+                    arguments: ["-q"], 
+                    on_output: (line) => {
+                        if (process.env.DEBUG) {
+                            console.log(`SWI-Prolog:`, line);
+                        }
+                    }
+                });
+            } else {
+                swipl = await SWIPL({ 
+                    arguments: ["-x", "mi.qsave"], 
+                    on_output: (line) => {
+                        if (process.env.DEBUG) {
+                            console.log(`SWI-Prolog:`, line);
+                        }
+                    },
+                    preRun: [(module) => { 
+                        console.log("[PRE-RUN] Loading mi.qsave into SWIPL filesystem");
+                        const miData = fs.readFileSync(path.join(workspaceDir, 'mi.qsave'));
+                        module.FS.writeFile('mi.qsave', miData); }
+                    ]
+                });
+            }
+
+        } catch (error) {
+            console.error(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
+            throw error;
+        }
     }
 
     const lines = ["\n\n<START OF TOOL OUTPUT FOR run_dml_file_tool>\n"];
@@ -1061,14 +1089,39 @@ Format your response in clear sections with headers.`;
         
         // Always create a fresh SWIPL instance - no state persistence
         console.log(`[ABORT] Creating fresh SWIPL instance for conversation ${conversationId}`);
-        const swipl = await SWIPL({ 
-            arguments: ["-q"], 
-            on_output: (line) => {
-                if (process.env.DEBUG) {
-                    console.log(`[${conversationId}] SWI-Prolog:`, line);
-                }
+
+        let swipl;
+        const workspaceDir = this.workspacePath;
+        try {
+            if (process.env.DML_DEV_MODE) {
+                swipl = await SWIPL({ 
+                    arguments: ["-q"], 
+                    on_output: (line) => {
+                        if (process.env.DEBUG) {
+                            console.log(`[${conversationId}] SWI-Prolog:`, line);
+                        }
+                    }
+                });
+            } else {
+                swipl = await SWIPL({ 
+                    arguments: ["-x", "mi.qsave"], 
+                    on_output: (line) => {
+                        if (process.env.DEBUG) {
+                            console.log(`[${conversationId}] SWI-Prolog:`, line);
+                        }
+                    },
+                    preRun: [(module) => { 
+                        console.log("[PRE-RUN] Loading mi.qsave into SWIPL filesystem");
+                        const miData = fs.readFileSync(path.join(workspaceDir, 'mi.qsave'));
+                        module.FS.writeFile('mi.qsave', miData); }
+                    ]
+                });
             }
-        });
+
+        } catch (error) {
+            console.error(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
+            throw error;
+        }
         
         if (!convState) {
             // Create new conversation state

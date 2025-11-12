@@ -439,6 +439,9 @@ logical structure validated, all citations properly attributed.
 ### Commands
 
 - **Natural language**: Just describe what you want - DeepClause will find or create appropriate skills
+
+or use any of these slash commands:
+
 - `/run [skill.dml]` - Execute a specific skill
 - `/create [description]` - Generate a new skill from natural language
 - `/explain` - Get a plain-English explanation of the last execution, showing which decisions were symbolic logic vs AI
@@ -464,6 +467,10 @@ cd DeepClauseCLI/wasm
 # Install dependencies
 npm install
 
+# Download the Alpine Linux VM image (required for vm_exec tool)
+# Download from: https://drive.google.com/file/d/1gyV4Xfn-s9JSV_nThe-fhKO5886OmEmf/view?usp=sharing
+# Place the downloaded alpine.img file in: vendor/v86/images/alpine.img
+
 
 ### Running in Development
 
@@ -471,10 +478,11 @@ npm install
 # Start vite
 npm run dev:vite
 
-# Start Electron app in dev mode
+# Start the Electron app in development mode
 npm run electron:dev
-
 ```
+
+This will start both the Vite dev server for the renderer process and the Electron main process with hot reload enabled.
 
 ### Project Structure
 

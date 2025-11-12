@@ -1365,7 +1365,7 @@ mi(read_file_to_string(File, Content, Options), Memory, Context, Session, Params
   %read a file from the workspace and unify its contents with Content
   get_workspace_path(Params, WorkspacePath),
   format(string(FilePath), '~w/~w', [WorkspacePath, File]),
-  read_file_to_string(FilePath, Content, Options), !.
+  readutil:read_file_to_string(FilePath, Content, Options), !.
 
 
  % Handle other rules

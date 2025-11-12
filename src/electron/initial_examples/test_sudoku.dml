@@ -42,7 +42,7 @@ blocks([N1,N2,N3|Ns1], [N4,N5,N6|Ns2], [N7,N8,N9|Ns3]) :-
 
 % Branch 1: Successful image recognition and solving
 agent_main :-
-    param("image_path", "The path to the image file containing the Sudoku puzzle.", ImagePath),
+    param("image_path:file", "The path to the image file containing the Sudoku puzzle.", ImagePath),
     ( ImagePath \= "" -> true ; (log(error="The 'image_path' parameter is missing."), fail) ),
     log(task="Attempting to solve Sudoku directly from the image: '{ImagePath}'."),
 

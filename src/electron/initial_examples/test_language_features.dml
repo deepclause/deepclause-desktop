@@ -1,0 +1,543 @@
+% ============================================================================
+% DML Language Features Test Suite
+% ============================================================================
+% This file demonstrates and tests most DML language features.
+% Use /run test_language_features.dml to execute all tests.
+% ============================================================================
+
+% ----------------------------------------------------------------------------
+% @-Predicates: LLM-Powered Functions
+% ----------------------------------------------------------------------------
+
+% Test 1: Simple extraction
+extract_number_from_text(Text, Number) :-
+    @("Extract the number from Text. Return just the numeric value.").
+
+% Test 2: Data transformation
+classify_sentiment(Text, Sentiment) :-
+    @("Classify the sentiment of Text as 'positive', 'negative', or 'neutral'. Return only the classification word.").
+
+% Test 3: Structured extraction
+parse_contact_info(Text, ContactDict) :-
+    @("Extract name, email, and phone from Text. Return as a Prolog dictionary like _{name: 'John', email: 'john@example.com', phone: '555-1234'}.").
+
+% ----------------------------------------------------------------------------
+% Helper Predicates: Standard Prolog Logic
+% ----------------------------------------------------------------------------
+
+% Test list operations
+test_list_operations :-
+    log("Testing list operations..."),
+    
+    % append/3
+    append([1, 2], [3, 4], L1),
+    log("append([1,2], [3,4]) = {L1}"),
+    
+    % length/2
+    length([a, b, c, d], Len),
+    log("length([a,b,c,d]) = {Len}"),
+    
+    % member/2
+    ( member(2, [1, 2, 3]) ->
+        log("member(2, [1,2,3]) = true")
+    ;
+        log("member(2, [1,2,3]) = false")
+    ),
+    
+    % reverse/2
+    reverse([1, 2, 3], Rev),
+    log("reverse([1,2,3]) = {Rev}"),
+    
+    % nth0/3 (0-indexed)
+    nth0(0, [a, b, c], First),
+    log("nth0(0, [a,b,c]) = {First}"),
+    
+    % nth1/3 (1-indexed)
+    nth1(1, [a, b, c], First1),
+    log("nth1(1, [a,b,c]) = {First1}").
+
+% Test arithmetic
+test_arithmetic :-
+    log("Testing arithmetic..."),
+    
+    X is 5 + 3,
+    log("5 + 3 = {X}"),
+    
+    Y is X * 2,
+    log("8 * 2 = {Y}"),
+    
+    Z is sqrt(16),
+    log("sqrt(16) = {Z}"),
+    
+    % Comparisons
+    ( 10 > 5 ->
+        log("10 > 5 = true")
+    ;
+        log("10 > 5 = false")
+    ),
+    
+    ( 5 =< 5 ->
+        log("5 =< 5 = true")
+    ;
+        log("5 =< 5 = false")
+    ).
+
+% Test string operations
+test_strings :-
+    log("Testing string operations..."),
+    
+    % format/3
+    format(string(Result1), "Hello ~w, you are ~w years old", ["Alice", 30]),
+    log("Formatted: {Result1}"),
+    
+    % atomic_list_concat/3
+    atomic_list_concat(["Hello", "world"], " ", Result2),
+    log("Joined: {Result2}"),
+    
+    % atom_string/2
+    atom_string(hello, Str),
+    log("atom_string(hello) = {Str}"),
+    
+    % atom_number/2
+    atom_number('42', Num),
+    log("atom_number('42') = {Num}").
+
+% Test pattern matching
+process_list([]) :-
+    log("Received empty list").
+
+process_list([H|T]) :-
+    log("List head: {H}"),
+    ( T = [] ->
+        log("That was the last element")
+    ;
+        log("Processing tail..."),
+        process_list(T)
+    ).
+
+% Test conditional logic
+test_conditionals(Value) :-
+    log("Testing conditionals with value: {Value}"),
+    
+    % If-then-else
+    ( Value > 10 ->
+        log("Value is greater than 10")
+    ; Value < 0 ->
+        log("Value is negative")
+    ;
+        log("Value is between 0 and 10")
+    ).
+
+% Test higher-order predicates
+test_higher_order :-
+    log("Testing higher-order predicates..."),
+    
+    % findall/3
+    Data = [1, 2, 3, 4, 5],
+    findall(X, member(X, Data), All),
+    log("findall found: {All}"),
+    
+    % maplist/3
+    maplist(double, [1, 2, 3], Doubled),
+    log("Doubled: {Doubled}"),
+    
+    % include/3 (filter)
+    include(is_even, [1, 2, 3, 4, 5, 6], Evens),
+    log("Even numbers: {Evens}"),
+    
+    % exclude/3
+    exclude(is_even, [1, 2, 3, 4, 5, 6], Odds),
+    log("Odd numbers: {Odds}").
+
+double(X, Y) :- Y is X * 2.
+
+is_even(N) :- 0 is N mod 2.
+
+% ----------------------------------------------------------------------------
+% File I/O Tests
+% ----------------------------------------------------------------------------
+
+test_file_operations :-
+    log("Testing file operations..."),
+    
+    % Write to file
+    open("test_output.txt", write, Stream1),
+    write(Stream1, "Hello from DML!\n"),
+    write(Stream1, "Testing file I/O.\n"),
+    close(Stream1),
+    log("✓ Wrote to test_output.txt"),
+    
+    % Read from file
+    read_file_to_string("test_output.txt", Content, []),
+    log("✓ Read content: {Content}"),
+    
+    % Check file existence
+    ( exists_file("test_output.txt") ->
+        log("✓ File exists check: true")
+    ;
+        log("✗ File exists check: false")
+    ),
+    
+    % Append to file
+    open("test_output.txt", append, Stream2),
+    write(Stream2, "Appended line.\n"),
+    close(Stream2),
+    log("✓ Appended to file"),
+    
+    % Create directory
+    make_directory("test_dir"),
+    log("✓ Created directory: test_dir").
+
+% ----------------------------------------------------------------------------
+% String Interpolation Tests
+% ----------------------------------------------------------------------------
+
+test_string_interpolation :-
+    log("Testing string interpolation..."),
+    
+    Name = "Alice",
+    Age = 30,
+    City = "New York",
+    
+    % Interpolation in log
+    log("User {Name} is {Age} years old and lives in {City}"),
+    
+    % Interpolation in yield
+    yield("Processing data for user: {Name}"),
+    
+    % Multiple variables
+    X = 10,
+    Y = 20,
+    Sum is X + Y,
+    log("{X} + {Y} = {Sum}").
+
+% ----------------------------------------------------------------------------
+% Multi-line String Tests (Quasi-Quotations)
+% ----------------------------------------------------------------------------
+
+test_quasi_quotations :-
+    log("Testing quasi-quotations..."),
+    
+    % Python code
+    PythonCode = {|string||
+def greet(name):
+    """Say hello to someone"""
+    return f"Hello, {name}!"
+
+result = greet("World")
+print(result)
+|},
+    
+    % Write Python script
+    open("test_script.py", write, PS),
+    write(PS, PythonCode),
+    close(PS),
+    log("✓ Created Python script with quasi-quotation"),
+    
+    % JSON template
+    JsonTemplate = {|string||
+{
+  "name": "Test",
+  "values": [1, 2, 3],
+  "nested": {
+    "key": "value"
+  }
+}
+|},
+    
+    log("✓ JSON template created: {JsonTemplate}").
+
+% ----------------------------------------------------------------------------
+% Memory Management Tests
+% ----------------------------------------------------------------------------
+
+test_memory :-
+    log("Testing memory operations..."),
+    
+    % Clear any existing memory
+    clear_memory,
+    log("✓ Cleared memory"),
+    
+    % Add system message
+    system("You are a helpful test assistant"),
+    log("✓ Added system message"),
+    
+    % Add user message
+    user("This is a test message"),
+    log("✓ Added user message"),
+    
+    % Add observation
+    observation("Test observation: data processed"),
+    log("✓ Added observation"),
+    
+    % Get memory
+    get_memory(Messages),
+    length(Messages, MsgCount),
+    log("✓ Memory contains {MsgCount} messages").
+
+% ----------------------------------------------------------------------------
+% User Input Tests (Parameters)
+% ----------------------------------------------------------------------------
+
+test_parameters :-
+    log("Testing parameter types..."),
+    
+    % Text parameter
+    param("test_name", "Enter a test name", TestName),
+    log("✓ Text parameter: {TestName}"),
+    
+    % Note: File, select, and multiselect parameters require UI interaction
+    % so they are demonstrated but not required for successful test completion
+    
+    log("Note: Interactive parameters (file, select, multiselect) require UI").
+
+% ----------------------------------------------------------------------------
+% Control Flow Tests
+% ----------------------------------------------------------------------------
+
+test_control_flow :-
+    log("Testing control flow..."),
+    
+    % Sequential execution
+    log("Step 1"),
+    log("Step 2"),
+    log("Step 3"),
+    
+    % Negation
+    ( \+ member(10, [1, 2, 3]) ->
+        log("✓ Negation works: 10 is not in [1,2,3]")
+    ;
+        log("✗ Negation failed")
+    ),
+    
+    % Disjunction (OR)
+    ( (member(2, [1, 2, 3]) ; member(5, [1, 2, 3])) ->
+        log("✓ Disjunction works: found 2 or 5")
+    ;
+        log("✗ Disjunction failed")
+    ).
+
+% ----------------------------------------------------------------------------
+% Backtracking Tests (Multiple Branches)
+% ----------------------------------------------------------------------------
+
+% This will be called with once/1, so only first success executes
+test_backtracking :-
+    log("Branch 1: Attempting complex operation..."),
+    % Simulate success
+    log("✓ Branch 1 succeeded!").
+
+test_backtracking :-
+    log("Branch 2: This should NOT execute (Branch 1 succeeded)").
+
+test_backtracking :-
+    log("Branch 3: This should NOT execute (Branch 1 succeeded)").
+
+% ----------------------------------------------------------------------------
+% Data Structure Tests
+% ----------------------------------------------------------------------------
+
+test_data_structures :-
+    log("Testing data structures..."),
+    
+    % Dictionary
+    Dict = _{name: "Alice", age: 30, active: true},
+    Name = Dict.name,
+    Age = Dict.age,
+    log("✓ Dictionary access: name={Name}, age={Age}"),
+    
+    % Nested structures
+    Person = person("Bob", 25, address("NYC", "USA")),
+    Person = person(PName, PAge, address(City, Country)),
+    log("✓ Nested structure: {PName}, {PAge}, {City}, {Country}"),
+    
+    % Lists of structures
+    People = [
+        person("Alice", 30),
+        person("Bob", 25),
+        person("Charlie", 35)
+    ],
+    length(People, PCount),
+    log("✓ List of structures: {PCount} people").
+
+% ----------------------------------------------------------------------------
+% @-Predicate Tests
+% ----------------------------------------------------------------------------
+
+test_at_predicates :-
+    log("Testing @-predicates (LLM-powered)..."),
+    
+    % Test 1: Extract number
+    extract_number_from_text("The answer is 42", Number),
+    log("✓ Extracted number: {Number}"),
+    
+    % Test 2: Sentiment classification
+    classify_sentiment("This is a wonderful day!", Sentiment1),
+    log("✓ Sentiment of positive text: {Sentiment1}"),
+    
+    classify_sentiment("This is terrible and awful!", Sentiment2),
+    log("✓ Sentiment of negative text: {Sentiment2}").
+
+% ----------------------------------------------------------------------------
+% Tool Integration Tests
+% ----------------------------------------------------------------------------
+
+test_tools :-
+    log("Testing tool integration..."),
+    
+    % Test VM execution
+    log("Testing Linux VM tool..."),
+    tool(linux_vm_with_sh_and_python("echo 'Hello from VM'"), VmOutput),
+    log("✓ VM output: {VmOutput}"),
+    
+    % Test Python in VM
+    tool(linux_vm_with_sh_and_python("python3 -c \"print(2 + 2)\""), PythonResult),
+    log("✓ Python result: {PythonResult}"),
+    
+    % Note: Web search tools would make actual API calls
+    % so we skip them in automated tests
+    log("Note: Skipping web search tools (would make real API calls)").
+
+% ----------------------------------------------------------------------------
+% JSON Parsing Tests
+% ----------------------------------------------------------------------------
+
+test_json :-
+    log("Testing JSON parsing..."),
+    
+    JSON = '{"name": "Test", "value": 123, "active": true}',
+    atom_json_dict(JSON, Dict, []),
+    Name = Dict.name,
+    Value = Dict.value,
+    log("✓ Parsed JSON: name={Name}, value={Value}").
+
+% ----------------------------------------------------------------------------
+% Output Tests
+% ----------------------------------------------------------------------------
+
+test_output :-
+    log("Testing output predicates..."),
+    
+    % log/1
+    log("✓ This is a log message"),
+    
+    % log/2 with formatting
+    log("✓ Formatted: ~w items found", [42]),
+    
+    % yield/1
+    yield("✓ This is a yielded message"),
+    
+    % end_thinking marker
+    log("✓ Calling end_thinking..."),
+    end_thinking.
+
+% ----------------------------------------------------------------------------
+% Main Test Runner
+% ----------------------------------------------------------------------------
+
+run_all_tests :-
+    log("================================================================="),
+    log("Starting DML Language Features Test Suite"),
+    log("================================================================="),
+    
+    test_string_interpolation,
+    yield("---"),
+    
+    test_list_operations,
+    yield("---"),
+    
+    test_arithmetic,
+    yield("---"),
+    
+    test_strings,
+    yield("---"),
+    
+    test_conditionals(7),
+    test_conditionals(15),
+    test_conditionals(-3),
+    yield("---"),
+    
+    test_control_flow,
+    yield("---"),
+    
+    log("Testing pattern matching with list:"),
+    process_list([a, b, c]),
+    yield("---"),
+    
+    test_higher_order,
+    yield("---"),
+    
+    test_data_structures,
+    yield("---"),
+    
+    test_file_operations,
+    yield("---"),
+    
+    test_quasi_quotations,
+    yield("---"),
+    
+    test_memory,
+    yield("---"),
+    
+    test_parameters,
+    yield("---"),
+    
+    test_json,
+    yield("---"),
+    
+    test_backtracking,
+    yield("---"),
+    
+    test_output,
+    yield("---"),
+    
+    test_tools,
+    yield("---"),
+    
+    log("================================================================="),
+    log("Testing @-predicates (requires LLM)..."),
+    log("================================================================="),
+    test_at_predicates,
+    
+    yield("---"),
+    log("================================================================="),
+    log("All Tests Complete!"),
+    log("=================================================================").
+
+% ----------------------------------------------------------------------------
+% Entry Point with Multiple Branches
+% ----------------------------------------------------------------------------
+
+% Branch 1: Run all tests successfully
+agent_main :-
+    run_all_tests,
+    answer("✅ **All DML Language Features Tested Successfully!**\n\n" +
+           "Tests covered:\n" +
+           "- String interpolation\n" +
+           "- List operations (append, length, member, reverse, nth0/1)\n" +
+           "- Arithmetic operations and comparisons\n" +
+           "- String operations (format, concat, conversions)\n" +
+           "- Pattern matching and list processing\n" +
+           "- Conditional logic (if-then-else)\n" +
+           "- Control flow (negation, disjunction)\n" +
+           "- Higher-order predicates (findall, maplist, include, exclude)\n" +
+           "- Data structures (dictionaries, nested structures)\n" +
+           "- File I/O (read, write, append, directory operations)\n" +
+           "- Quasi-quotations (multi-line strings)\n" +
+           "- Memory management (system, user, observation messages)\n" +
+           "- Parameters (text input)\n" +
+           "- JSON parsing\n" +
+           "- Backtracking (multiple branches with once/1)\n" +
+           "- Output predicates (log, yield, end_thinking)\n" +
+           "- Tool integration (Linux VM, Python execution)\n" +
+           "- @-predicates (LLM-powered extraction and classification)\n\n" +
+           "Check the execution log for detailed test results!").
+
+% Branch 2: Fallback if anything fails
+agent_main :-
+    log("Some tests failed, but continuing..."),
+    answer("⚠️ Test suite completed with some failures. Check the log for details.").
+
+% Branch 3: Final fallback
+agent_main :-
+    answer("❌ Critical error in test suite. Please review the implementation.").
