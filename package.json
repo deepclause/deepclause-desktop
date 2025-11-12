@@ -1,5 +1,5 @@
 {
-  "name": "deepclause-cli-wasm",
+  "name": "deepclause-desktop",
   "version": "0.0.1",
   "main": "src/electron/main/index.js",
   "scripts": {
