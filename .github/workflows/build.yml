@@ -19,9 +19,20 @@ jobs:
         with:
           node-version: 22
 
-      - name: download VM image
-        run: ls -latrh && mkdir -p vendor/v86/images/ && wget -O vendor/v86/images/alpine.img "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=8ATWM8ZCOYZVY9CV3LXH%2F20251112%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251112T115654Z&X-Amz-Expires=43200&X-Amz-Signature=a5bd323efcfd26425380704ac0eb453c8a7b4a61adf14b72656bf451a4e00fd2&X-Amz-SignedHeaders=host&x-id=GetObject" 
+      - name: Download VM image (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p vendor/v86/images
+          curl -fsSL -o vendor/v86/images/alpine.img "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=8ATWM8ZCOYZVY9CV3LXH%2F20251112%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251112T115654Z&X-Amz-Expires=43200&X-Amz-Signature=a5bd323efcfd26425380704ac0eb453c8a7b4a61adf14b72656bf451a4e00fd2&X-Amz-SignedHeaders=host&x-id=GetObject"
+        shell: bash
 
+      - name: Download VM image (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path vendor\v86\images | Out-Null
+          Invoke-WebRequest -Uri "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=8ATWM8ZCOYZVY9CV3LXH%2F20251112%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251112T115654Z&X-Amz-Expires=43200&X-Amz-Signature=a5bd323efcfd26425380704ac0eb453c8a7b4a61adf14b72656bf451a4e00fd2&X-Amz-SignedHeaders=host&x-id=GetObject" -OutFile vendor\v86\images\alpine.img
+        shell: pwsh
+        
       - name: Build/release Electron app
         uses: samuelmeuli/action-electron-builder@v1
         with:
