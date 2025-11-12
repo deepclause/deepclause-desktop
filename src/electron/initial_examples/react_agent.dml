@@ -1,0 +1,123 @@
+% @-Predicate specifications
+
+% Format the history list into a human-readable string
+format_history_for_prompt([], "No steps taken yet.") :- !.
+format_history_for_prompt(HistoryList, FormattedHistoryString) :-
+    format_steps(HistoryList, StepStrings),
+    atomic_list_concat(StepStrings, '', FormattedHistoryString).
+
+% Helper predicate to format each step
+format_steps([], []).
+format_steps([step(Iteration, Thought, Action, Observation)|Rest], [FormattedStep|RestFormatted]) :-
+    format_step(Iteration, Thought, Action, Observation, FormattedStep),
+    format_steps(Rest, RestFormatted).
+
+% Format a single step into a string
+format_step(Iteration, Thought, Action, Observation, FormattedStep) :-
+    format(atom(FormattedStep), 
+           'Step ~w:\nThought: ~w\nAction: ~w\nObservation: ~w\n\n',
+           [Iteration, Thought, Action, Observation]).
+
+think(Task, FormattedHistory, Thought, Action) :-
+    @("You are a large language model acting as the reasoning engine for a ReAct-style agent.
+    Your goal is to solve the user's task by breaking it down into a sequence of thoughts and actions.
+
+    **User's Task:**
+    {Task}
+
+    **Available Tools:**
+    {tools}
+
+    **Your Process:**
+    For each step, you must first think about the problem and your plan. Then, you must choose exactly ONE action to take.
+    The action can be either calling a tool or finishing the task.
+
+    **History of Previous Steps:**
+    {FormattedHistory}
+
+    **Your Turn:**
+    Based on the task and the history, decide on your next thought and action.
+
+    **Output Format:**
+    You must output a valid Prolog term in the format: `result(Thought, ActionTerm)`.
+    - `Thought` must be a string describing your reasoning (e.g., \"I need to find the current date, so I will use the linux vm.\").
+    - `ActionTerm` must be a Prolog terms of the following form:
+      - `tool_call(web_search(\"your search query\"))`
+      - `tool_call(linux_vm_with_sh_and_python(\"your shell command\"))`
+      - `finish(\"your final answer to the user\")`
+      Here, the tool_call predicate is defined as: tool_call(InToolTermWithToolarguments).
+      InToolTermWithToolarguments should be a term of the form tool_call(tool_name(args)) where
+      tool_name should be one of the above tools or simply finish(StringWithFinalAnswer).
+
+    Provide only the `result(Thought, ActionTerm)` term as your response.").
+
+% Helper predicate to execute the chosen action
+
+execute_action(tool_call(Tool), Observation) :-
+    tool(Tool, Observation).
+    
+execute_action(_, "Error: Unknown tool or action format.").
+
+% The main ReAct loop
+% react_loop(Task, History, CurrentIteration, MaxIterations)
+
+% Base case: Stop if max iterations are reached
+react_loop(_, _, Iter, Max) :-
+    Iter > Max,
+    log(error="Max iterations reached. The agent could not complete the task."),
+    fail.
+
+% Recursive step: Think, Act, Observe, and loop
+react_loop(Task, History, Iter, Max) :-
+    % 1. THINK: Generate the next thought and action based on the current state
+    format_history_for_prompt(History, FormattedHistory),
+    think(Task, FormattedHistory, Thought, Action),
+    log(Thought),
+    log("Action: {Action}"),
+
+    % 2. ACT: Check if the action is to finish or to use a tool
+    ( Action = finish(FinalAnswer) ->
+        log("Task finished. Presenting final answer."),
+        end_thinking,
+        system("You are a helpful AI agent that has just completed a task using a ReAct loop."),
+        user(Task),
+        observation("This is the answer I found: {FinalAnswer}"),
+        chat("What is the final answer? Please present the final answer in a clear and concise manner, so that the user's request can be fulfilled.")
+    ;
+        Action = tool_call(Tool),
+        log("Executing ~w", [Tool]),
+        execute_action(Action, Observation),
+        log("Observation: ~w", [Observation]),
+
+        % 3. OBSERVE & RECURSE: Add the new step to history and continue the loop
+        NewHistoryItem = step(Iter, Thought, Action, Observation),
+        append(History, [NewHistoryItem], NewHistory),
+        NextIter is Iter + 1,
+        react_loop(Task, NewHistory, NextIter, Max)
+    ).
+
+% Main agent logic
+
+% Branch 1: The primary ReAct agent loop
+agent_main :-
+    param("task", "The task for the ReAct agent to solve.", Task),
+    ( Task \= "" -> true ; (log(error="The 'task' parameter is missing."), fail) ),
+    log("Starting ReAct agent for task: '{Task}'."),
+    MaxIterations = 30,
+    InitialHistory = [],
+    InitialIteration = 1,
+    react_loop(Task, InitialHistory, InitialIteration, MaxIterations).
+
+% Branch 2: Fallback if the loop fails (e.g., max iterations reached)
+agent_main :-
+    param("task", "The task for the ReAct agent to solve.", Task),
+    log(error="The ReAct agent failed to complete the task '{Task}' within the allowed number of steps."),
+    end_thinking,
+    system("You are a helpful assistant explaining a failure."),
+    answer("I apologize, but I was unable to complete the task. I may have gotten stuck in a loop or the problem was too complex for the number of steps I'm allowed to take. Please try rephrasing the task or breaking it down into smaller parts.").
+
+% Branch 3: Final fallback for unexpected errors
+agent_main :-
+    log(error="A critical and unexpected error occurred during the agent's operation."),
+    end_thinking,
+    answer("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

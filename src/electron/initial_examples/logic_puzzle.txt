@@ -1,0 +1,8 @@
+Reasoning Test
+Ali and Bo are friends with Cam. Cam told them that her anniversary is one of 10 possible dates:
+April 17, April 18, April 28, July 16, July 17, July 19, June 16, June 29, March 18, March 19
+Cam then privately tells Ali the month and Bo the day number of the anniversary.
+Ali: "I don't know when Cam’s anniversary is, and I know that Bo does not know it either."
+Bo: "At first I didn't know when Cam’s anniversary was, but I know now, after Ali's statement."
+Ali: "Then I also know when Cam’s anniversary is."
+When is Cam’s anniversary?

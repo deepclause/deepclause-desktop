@@ -1,0 +1,31 @@
+% Example: Analyzing CSV data and creating data-driven visualizations
+
+% Step 1: Analyze the data first
+agent_main :-
+    log("Step 1: Analyzing sales data"),
+    tool(data_analyzer("sample_sales_data.csv", "full"), Analysis),
+    log("Data analysis complete"),
+    
+    % Step 2: Create a bar chart from the CSV data
+    log("Step 2: Creating bar chart from sales data"),
+    tool(diagram_generator(
+        "bar",
+        "sample_sales_data.csv",
+        "Monthly Sales Performance",
+        "sales_chart.md"
+    ), ChartMd),
+    
+    % Step 3: Create a pie chart showing distribution
+    log("Step 3: Creating pie chart for product distribution"),
+    tool(diagram_generator(
+        "pie",
+        "sample_sales_data.csv",
+        "Product Sales Distribution",
+        "product_distribution.md"
+    ), PieMd),
+    
+    end_thinking,
+    answer("I've analyzed your sales data and created visualizations:"),
+    answer(Analysis),
+    answer(ChartMd),
+    answer(PieMd).

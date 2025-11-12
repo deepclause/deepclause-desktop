@@ -1,0 +1,168 @@
+% Quick Start: Diagram Tools in DML
+% Copy and modify these examples for your use case
+
+% ============================================
+% Example 1: Simple Flowchart
+% ============================================
+agent_main :-
+    tool(diagram_generator(
+        "flowchart",
+        "Start -> Process -> Decision? -> Yes -> Success; No -> Retry -> Process",
+        "Simple Process",
+        "process.md"
+    ), Diagram),
+    answer(Diagram).
+
+% ============================================
+% Example 2: Analyze CSV and Create Chart
+% ============================================
+agent_main :-
+    % Put your sales_data.csv in workspace first
+    tool(data_analyzer("sales_data.csv", "full"), Analysis),
+    tool(diagram_generator("bar", "sales_data.csv", "Sales", "sales.md"), Chart),
+    answer(Analysis),
+    answer(Chart).
+
+% ============================================
+% Example 3: Multiple Visualizations
+% ============================================
+agent_main :-
+    File = "data.csv",
+    
+    % Create different views of the same data
+    tool(diagram_generator("bar", File, "Bar Chart", "bar.md"), Bar),
+    tool(diagram_generator("pie", File, "Pie Chart", "pie.md"), Pie),
+    
+    answer("Bar Chart:"),
+    answer(Bar),
+    answer("Pie Chart:"),
+    answer(Pie).
+
+% ============================================
+% Example 4: LLM-Generated Insights + Diagram
+% ============================================
+agent_main :-
+    % Analyze data
+    tool(data_analyzer("metrics.csv", "full"), Analysis),
+    
+    % Get insights from LLM
+    format(string(Prompt), "Summarize these metrics: ~w", [Analysis]),
+    generate(Prompt, Summary),
+    
+    % Visualize
+    tool(diagram_generator("bar", "metrics.csv", "Metrics", "chart.md"), Chart),
+    
+    answer("## Summary"),
+    answer(Summary),
+    answer("## Visualization"),
+    answer(Chart).
+
+% ============================================
+% Example 5: Sequence Diagram
+% ============================================
+agent_main :-
+    Description = "Client sends request to Server. Server validates with Auth. Auth returns token. Server queries Database. Database returns data. Server sends response to Client.",
+    tool(diagram_generator(
+        "sequence",
+        Description,
+        "API Sequence",
+        "sequence.md"
+    ), Diagram),
+    answer(Diagram).
+
+% ============================================
+% Example 6: ER Diagram from JSON Schema
+% ============================================
+agent_main :-
+    % First create a schema.json file or use existing one
+    tool(diagram_generator(
+        "er",
+        "database_schema.json",
+        "Database Schema",
+        "schema.md"
+    ), ErDiagram),
+    answer(ErDiagram).
+
+% ============================================
+% Example 7: Gantt Chart for Project Timeline
+% ============================================
+agent_main :-
+    Timeline = "Jan: Planning. Feb-Mar: Development. Apr: Testing. May: Deployment",
+    tool(diagram_generator(
+        "gantt",
+        Timeline,
+        "Project Timeline",
+        "timeline.md"
+    ), Gantt),
+    answer(Gantt).
+
+% ============================================
+% Example 8: State Machine Diagram
+% ============================================
+agent_main :-
+    States = "Idle -> Running: Start. Running -> Paused: Pause. Paused -> Running: Resume. Running -> Completed: Finish. Running -> Failed: Error. Failed -> Idle: Reset. Completed -> Idle: Reset",
+    tool(diagram_generator(
+        "state",
+        States,
+        "Job State Machine",
+        "states.md"
+    ), Diagram),
+    answer(Diagram).
+
+% ============================================
+% Example 9: Direct Mermaid Syntax
+% ============================================
+agent_main :-
+    % For advanced users who know Mermaid syntax
+    MermaidCode = "pie title Task Distribution\n    \"Coding\" : 45\n    \"Testing\" : 25\n    \"Docs\" : 15\n    \"Meetings\" : 15",
+    tool(diagram_generator(
+        "pie",
+        MermaidCode,
+        "Time Allocation",
+        "time.md"
+    ), Pie),
+    answer(Pie).
+
+% ============================================
+% Example 10: Complete Workflow
+% ============================================
+agent_main :-
+    % Step 1: Get data
+    tool(web_search("recent AI developments", num=5), SearchResults),
+    
+    % Step 2: Analyze (pretend we extracted to CSV)
+    % In real use, you'd parse SearchResults and save to CSV
+    
+    % Step 3: Visualize findings
+    tool(diagram_generator(
+        "flowchart",
+        "Search -> Extract Data -> Analyze Trends -> Generate Report -> Present Results",
+        "Research Pipeline",
+        "pipeline.md"
+    ), Pipeline),
+    
+    % Step 4: Create timeline
+    tool(diagram_generator(
+        "gantt",
+        "Week 1: Data Collection. Week 2: Analysis. Week 3: Report Writing. Week 4: Review",
+        "Research Schedule",
+        "schedule.md"
+    ), Schedule),
+    
+    answer("## Research Pipeline"),
+    answer(Pipeline),
+    answer("## Schedule"),
+    answer(Schedule).
+
+% ============================================
+% TIPS:
+% 
+% 1. Always use tool() predicate - no Prolog changes needed
+% 2. File paths are relative to workspace directory
+% 3. Use data_analyzer first to understand your data
+% 4. Diagram types: flowchart, sequence, class, state, gantt, pie, bar, line, er, graph
+% 5. Save diagrams with .md extension for markdown format
+% 6. Set save_to_file to null to return diagram without saving
+% 7. LLM converts natural language to Mermaid automatically
+% 8. CSV/JSON files are read and converted automatically
+% ============================================

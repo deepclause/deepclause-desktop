@@ -1,0 +1,720 @@
+import fs from 'fs';
+import path from 'path';
+import { analyzeDmlParameters, formatParametersInfo, readDmlFileContents, listDmlFiles } from './dml-utils.js';
+import https from 'https';
+import http from 'http';
+import crypto from 'crypto';
+import { URL } from 'url';
+import { tool as aiTool } from 'ai';
+import { z } from 'zod';
+import { execSync } from 'child_process';
+
+
+const MAX_LENGTH_TRUNCATE_CONTENT = 300000;
+
+/**
+ * Truncate content if it exceeds max length
+ */
+function truncateContent(content, maxLength = MAX_LENGTH_TRUNCATE_CONTENT) {
+    if (content.length <= maxLength) {
+        return content;
+    } else {
+        return (
+            content.substring(0, maxLength / 2) +
+            `\n..._This content has been truncated to stay below ${maxLength} characters_...\n` +
+            content.substring(content.length - maxLength / 2)
+        );
+    }
+}
+
+/**
+ * Encode image to base64
+ */
+async function encodeImage(imagePath) {
+    if (imagePath.startsWith("http")) {
+        // Download image first
+        const response = await fetch(imagePath, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to download image: ${response.statusText}`);
+        }
+
+        const buffer = await response.arrayBuffer();
+        return Buffer.from(buffer).toString('base64');
+    }
+
+    // Read local file
+    const buffer = fs.readFileSync(imagePath);
+    return buffer.toString('base64');
+}
+
+/**
+ * Base Tool class
+ */
+class Tool {
+    constructor() {
+        this.name = "";
+        this.description = "";
+        this.inputs = {};
+        this.output_type = "string";
+    }
+
+    async forward(...args) {
+        throw new Error("forward method must be implemented by subclass");
+    }
+
+    // Adapter used by the Vercel AI SDK wrapper
+    async execute(args = {}) {
+        const keys = Object.keys(this.inputs || {});
+        const ordered = keys.map(k => {
+            const spec = this.inputs[k] || {};
+            let v = args[k];
+            if (v === undefined) {
+                if (Object.prototype.hasOwnProperty.call(spec, 'default')) {
+                    v = spec.default;
+                } else if (spec.nullable) {
+                    v = null;
+                }
+            }
+            return v;
+        });
+        return await this.forward(...ordered);
+    }
+}
+
+/**
+ * Google Search Tool
+ */
+class GoogleSearchTool extends Tool {
+    constructor() {
+        super();
+        this.name = "web_search";
+        this.description = "Performs a web search using the You.com (ydc-index) API and returns a markdown list of top results.";
+        this.inputs = {
+            query: { type: "string", description: "The search query to perform." },
+            filter_year: {
+                type: "integer",
+                description: "Optionally restrict results to a certain publication year (performed locally on page_age if available).",
+                nullable: true,
+            },
+            num: {
+                type: "integer",
+                description: "Number of results to return (after optional filtering).",
+                default: 50,
+                nullable: true,
+            },
+        };
+        this.output_type = "string";
+    }
+
+    async forward(query, filterYear = null, num = 50) {
+        const apiKey =
+            process.env.YOU_COM_API_KEY ||
+            process.env.YOUCOM_API_KEY ||
+            process.env.YDC_API_KEY;
+        if (!apiKey) {
+            throw new Error("Missing API key. Set YOU_COM_API_KEY (or YOUCOM_API_KEY / YDC_API_KEY).");
+        }
+
+        const endpoint = "https://api.ydc-index.io/v1/search";
+        const requestUrl = `${endpoint}?query=${encodeURIComponent(query)}&count=${num || 10}`;
+
+        let data;
+        try {
+            const resp = await fetch(requestUrl, {
+                method: 'GET',
+                headers: { 'X-API-Key': apiKey }
+            });
+            if (!resp.ok) {
+                let errText;
+                try { errText = await resp.text(); } catch { errText = resp.statusText; }
+                throw new Error(`HTTP ${resp.status} ${resp.statusText}: ${errText}`);
+            }
+            data = await resp.json();
+        } catch (e) {
+            throw new Error(`Search failed: ${e.message}`);
+        }
+
+        const webResults = (data?.results?.web || []);
+        if (!webResults.length) {
+            return `No results found for '${query}'.`;
+        }
+
+        // Optional year filter (local)
+        let filtered = webResults;
+        if (filterYear !== null) {
+            filtered = webResults.filter(r => {
+                if (!r.page_age) return false;
+                const yr = new Date(r.page_age).getUTCFullYear();
+                return yr === filterYear;
+            });
+            if (!filtered.length) {
+                return `No results found for '${query}' with filter year=${filterYear}.`;
+            }
+        }
+
+        const limited = filtered.slice(0, Math.max(1, num || 50));
+
+        const formatted = limited.map((r, idx) => {
+            const title = r.title || r.url || "Untitled";
+            const url = r.url || "";
+            const dateStr = r.page_age ? `\nDate: ${r.page_age}` : "";
+            const description = r.description ? `\n${r.description}` : "";
+            let snippet = "";
+            if (Array.isArray(r.snippets) && r.snippets.length) {
+                // Join a few snippets (truncate to keep concise)
+                const joined = r.snippets.slice(0, 3).join(" ");
+                snippet = `\n${joined}`;
+            }
+            return `${idx}. [${title}](${url})${dateStr}${description}${snippet}`.trim();
+        });
+
+        return "## Search Results\n" + formatted.join("\n\n");
+    }
+}
+
+/**
+ * Google Scholar Search Tool
+ */
+class GoogleScholarSearchTool extends Tool {
+    constructor() {
+        super();
+        this.name = "google_scholar_search";
+        this.description = "Performs a google scholar search for your query then returns a string of the top search results. Results contain number of citations, year of publication, source, snippet, and sometimes pdf link to the paper.";
+        this.inputs = {
+            query: { type: "string", description: "The search query to perform." },
+            num: {
+                type: "integer",
+                description: "Number of results to return",
+                default: 10,
+                nullable: true,
+            },
+        };
+        this.output_type = "string";
+    }
+
+    async forward(query, num = 10) {
+        const apiKey = process.env.SERPER_API_KEY;
+        if (!apiKey) {
+            throw new Error("Missing API key. Make sure you have 'SERPER_API_KEY' in your env variables.");
+        }
+
+        const params = new URLSearchParams({
+            q: query,
+            api_key: apiKey,
+            num: num.toString(),
+        });
+
+        const baseUrl = "https://google.serper.dev/scholar";
+
+        try {
+            const response = await fetch(`${baseUrl}?${params}`);
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(JSON.stringify(errorData));
+            }
+
+            const results = await response.json();
+            const organicKey = "organic";
+            
+            if (!(organicKey in results)) {
+                throw new Error(`No results found for query: '${query}'. Use a less restrictive query.`);
+            }
+
+            if (results[organicKey].length === 0) {
+                return `No results found for '${query}'. Try with a more general query.`;
+            }
+
+            const webSnippets = [];
+            if (organicKey in results) {
+                results[organicKey].forEach((page, idx) => {
+                    let datePublished = "";
+                    if ("year" in page) {
+                        datePublished = "\nYear published: " + page.year.toString();
+                    }
+
+                    let source = "";
+                    if ("source" in page) {
+                        source = "\nSource: " + page.source;
+                    }
+
+                    let snippet = "";
+                    if ("snippet" in page) {
+                        snippet = "\n" + page.snippet;
+                    }
+
+                    let citedBy = "";
+                    if ("cited_by" in page) {
+                        citedBy = "\nCited by: " + page.cited_by.toString();
+                    }
+
+                    let publicationInfo = "";
+                    if ("publicationInfo" in page) {
+                        publicationInfo = "\nPublication info: " + page.publicationInfo.toString();
+                    }
+
+                    let pdfUrl = "";
+                    if ("pdfUrl" in page) {
+                        pdfUrl = "\nPDF URL: " + page.pdfUrl.toString();
+                    }
+
+                    const redactedVersion = `${idx}. [${page.title}](${page.link})${datePublished}${citedBy}${publicationInfo}${pdfUrl}${source}\n${snippet}`;
+                    webSnippets.push(redactedVersion);
+                });
+            }
+
+            return "## Search Results\n" + webSnippets.join("\n\n");
+        } catch (error) {
+            throw new Error(`Scholar search failed: ${error.message}`);
+        }
+    }
+}
+
+/**
+ * Visit Webpage Tool
+ */
+class VisitWebpageTool extends Tool {
+    constructor(maxOutputLength = MAX_LENGTH_TRUNCATE_CONTENT) {
+        super();
+        this.name = "visit_webpage";
+        this.description = "Visits a webpage at the given url and reads its content as a markdown string. Use this to browse webpages.";
+        this.inputs = {
+            url: {
+                type: "string",
+                description: "The url of the webpage to visit.",
+            }
+        };
+        this.output_type = "string";
+        this.maxOutputLength = maxOutputLength;
+    }
+
+    async forward(url) {
+        try {
+            const serpUrl = "https://scrape.serper.dev";
+            const apiKey = process.env.SERPER_API_KEY;
+            
+            if (!apiKey) {
+                throw new Error("Missing API key. Make sure you have 'SERPER_API_KEY' in your env variables.");
+            }
+
+            const payload = {
+                url: url,
+                includeMarkdown: true,
+                num: 25
+            };
+
+            const response = await fetch(serpUrl, {
+                method: 'POST',
+                headers: {
+                    'X-API-KEY': apiKey,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const res = await response.json();
+            const title = res.metadata?.title || "No title found";
+
+            return `URL: ${url}\nTitle: ${title}\nText: ${truncateContent(res.markdown, this.maxOutputLength)}`;
+        } catch (error) {
+            return "Error reading URL.";
+        }
+    }
+}
+
+/**
+ * Workspace Reader Tool
+ */
+class WorkspaceReaderTool extends Tool {
+    constructor(sessionId = null) {
+        super();
+        this.name = "workspace_reader";
+        this.description = "Reads a file from the given file_name in the workspace and converts it to markdown. Use this to easily read files in the workspace. This works only for HTML, PDF, XLS, PPTX and might truncate the output if its too long.";
+        this.inputs = {
+            file_name: {
+                type: "string",
+                description: "Relative path to file in the workspace",
+            }
+        };
+        this.output_type = "string";
+        this.sessionId = sessionId;
+    }
+
+    async forward(fileName) {
+        const maxOutputLength = MAX_LENGTH_TRUNCATE_CONTENT;
+        
+        // Use session_id if provided, otherwise try to get from environment
+        let userWorkspace = process.env.USER_WORKSPACES;
+        let sessionWorkspace;
+        
+        if (!userWorkspace) {
+            userWorkspace = process.env.DML_CLI_WORKSPACE || "./workspace";
+            sessionWorkspace = userWorkspace;
+            
+            // Create directory if it doesn't exist
+            if (!fs.existsSync(sessionWorkspace)) {
+                fs.mkdirSync(sessionWorkspace, { recursive: true });
+            }
+        } else {
+            const session = this.sessionId || process.env.PLOGCHAIN_SESSION_ID;
+            sessionWorkspace = path.join(userWorkspace, session);
+            
+            // Create directory if it doesn't exist
+            if (!fs.existsSync(sessionWorkspace)) {
+                fs.mkdirSync(sessionWorkspace, { recursive: true });
+            }
+        }
+
+        const filePath = path.join(sessionWorkspace, fileName);
+
+        try {
+            let content;
+            
+            // For non-markdown files, we'd need a conversion library
+            // For now, we'll just read as text
+            if (!fileName.endsWith(".md")) {
+                
+                try {
+                    const cmd = `uvx --with "markitdown[all]" markitdown "${filePath}"`;
+                    content = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }); // 10MB buffer
+                } catch (error) {
+                    throw new Error(`Error converting file to markdown: ${error.message}`);
+                }
+
+                return `Title: ${fileName}\nText: ${truncateContent(content, maxOutputLength)}`;
+
+            } else {
+
+                content = fs.readFileSync(filePath, 'utf-8');
+                return `Title: ${fileName}\nText: ${truncateContent(content, maxOutputLength)}`;
+
+            }
+
+        } catch (error) {
+            throw new Error(`Error reading file: ${error.message}`);
+        }
+    }
+}
+
+/**
+ * File Downloader Tool
+ */
+class FileDownloaderTool extends Tool {
+    constructor(sessionId = null) {
+        super();
+        this.name = "file_downloader";
+        this.description = "Downloads a file from the given URL and saves it in the user's workspace with the specified file name. If the file already exists, appends a random string to the name. Returns the adjusted file_name.";
+        this.inputs = {
+            url: {
+                type: "string",
+                description: "The URL of the file to download.",
+            },
+            file_name: {
+                type: "string",
+                description: "The name to save the file as in the workspace.",
+            }
+        };
+        this.output_type = "string";
+        this.sessionId = sessionId;
+    }
+
+    async forward(url, fileName) {
+        let userWorkspace = process.env.USER_WORKSPACES;
+        let sessionWorkspace;
+        
+        if (!userWorkspace) {
+            userWorkspace = process.env.DML_CLI_WORKSPACE || "./workspace";
+            sessionWorkspace = userWorkspace;
+            
+            if (!fs.existsSync(sessionWorkspace)) {
+                fs.mkdirSync(sessionWorkspace, { recursive: true });
+            }
+        } else {
+            const session = this.sessionId || process.env.PLOGCHAIN_SESSION_ID;
+            sessionWorkspace = path.join(userWorkspace, session);
+            
+            if (!fs.existsSync(sessionWorkspace)) {
+                fs.mkdirSync(sessionWorkspace, { recursive: true });
+            }
+        }
+
+        const ext = path.extname(fileName);
+        const baseName = path.basename(fileName, ext);
+        let adjustedFileName = fileName;
+        let filePath = path.join(sessionWorkspace, adjustedFileName);
+
+        // Ensure the file does not overwrite an existing one
+        while (fs.existsSync(filePath)) {
+            const randomSuffix = crypto.randomBytes(4).toString('hex');
+            adjustedFileName = `${baseName}_${randomSuffix}${ext}`;
+            filePath = path.join(sessionWorkspace, adjustedFileName);
+        }
+
+        try {
+            const response = await fetch(url);
+            
+            if (response.ok) {
+                const buffer = await response.arrayBuffer();
+                fs.writeFileSync(filePath, Buffer.from(buffer));
+                return adjustedFileName;
+            } else {
+                console.log("Error downloading URL, trying to scrape...");
+                
+                // Fall back to scraping
+                const serpUrl = "https://scrape.serper.dev";
+                const apiKey = process.env.SERPER_API_KEY;
+                
+                if (!apiKey) {
+                    throw new Error("Missing API key. Make sure you have 'SERPER_API_KEY' in your env variables.");
+                }
+
+                const payload = {
+                    url: url,
+                    includeMarkdown: true
+                };
+
+                const scrapeResponse = await fetch(serpUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-KEY': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!scrapeResponse.ok) {
+                    throw new Error(`Scraping failed: ${scrapeResponse.statusText}`);
+                }
+
+                const res = await scrapeResponse.json();
+                const title = res.metadata?.title || "No title found";
+
+                const content = `The file could not be downloaded directly, but these contents could be scraped:\n\nURL: ${url}\nTitle: ${title}\nText: ${res.text}`;
+
+                fs.writeFileSync(filePath, content, 'utf-8');
+                return adjustedFileName;
+            }
+        } catch (error) {
+            throw new Error(`Download failed: ${error.message}`);
+        }
+    }
+}
+
+/**
+ * Visualizer Tool
+ */
+class VisualizerTool extends Tool {
+    constructor(sessionId = null) {
+        super();
+        this.name = "visualizer";
+        this.description = "A tool that can answer questions about attached images. If no question is asked, it will create a caption for the image.";
+        this.inputs = {
+            image_path: {
+                type: "string",
+                description: "The path to the image on which to answer the question. This should be a relative path to a downloaded image in the user workspace.",
+            },
+            question: {
+                type: "string",
+                description: "The question to answer.",
+                nullable: true,
+            }
+        };
+        this.output_type = "string";
+        this.sessionId = sessionId;
+    }
+
+    async forward(imagePath, question = null) {
+        let addNote = false;
+        if (!question) {
+            addNote = true;
+            question = "Please write a detailed caption for this image.";
+        }
+
+        let userWorkspace = process.env.USER_WORKSPACES;
+        let sessionWorkspace;
+        
+        if (!userWorkspace) {
+            userWorkspace = process.env.DML_CLI_WORKSPACE || "./workspace";
+            sessionWorkspace = userWorkspace;
+            
+            if (!fs.existsSync(sessionWorkspace)) {
+                fs.mkdirSync(sessionWorkspace, { recursive: true });
+            }
+        } else {
+            const session = this.sessionId || process.env.PLOGCHAIN_SESSION_ID;
+            sessionWorkspace = path.join(userWorkspace, session);
+            
+            if (!fs.existsSync(sessionWorkspace)) {
+                fs.mkdirSync(sessionWorkspace, { recursive: true });
+            }
+        }
+
+        const imagePathFull = path.join(sessionWorkspace, imagePath);
+
+        if (!fs.existsSync(imagePathFull)) {
+            throw new Error(`Image file not found at ${imagePathFull}`);
+        }
+
+        const modelName = process.env.VISUALQA_MODEL;
+        if (!modelName) {
+            throw new Error("VISUALQA_MODEL environment variable is not set.");
+        }
+
+        try {
+            // Get MIME type
+            const ext = path.extname(imagePathFull).toLowerCase();
+            const mimeTypes = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp'
+            };
+            const mimeType = mimeTypes[ext] || 'image/jpeg';
+
+            const base64Image = await encodeImage(imagePathFull);
+
+            const payload = {
+                model: modelName,
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: question },
+                            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } },
+                        ],
+                    }
+                ],
+                max_tokens: 1000,
+            };
+
+            // This would need to be implemented with the actual LLM API
+            console.log("Vision model inference not implemented in JS version");
+            const output = "Mock vision model response for image analysis";
+
+            if (addNote) {
+                return `You did not provide a particular question, so here is a detailed caption for the image: ${output}`;
+            }
+
+            return output;
+
+        } catch (error) {
+            throw new Error(`Error during model inference: ${error.message}`);
+        }
+    }
+}
+
+/**
+ * Python Interpreter Tool
+ */
+class PythonInterpreterTool extends Tool {
+    constructor() {
+        super();
+        this.name = "python_interpreter";
+        this.description = "This is a tool that evaluates python code. It can be used to perform calculations.";
+        this.inputs = {
+            code: {
+                type: "string",
+                description: "The python code to run in interpreter",
+            }
+        };
+        this.output_type = "string";
+    }
+
+    async forward(code) {
+        // This would need to be implemented with a Python subprocess or interpreter
+        // For now, return a mock response
+        console.log("Python interpreter not implemented in JS version");
+        return `Mock Python execution result for code:\n${code}\n\nStdout:\nMock output\nOutput: Mock result`;
+    }
+}
+
+// Default tools list for export
+export const DEFAULT_TOOLS = [
+    new WorkspaceReaderTool(),
+    new FileDownloaderTool(),
+    new GoogleSearchTool(),
+    new GoogleScholarSearchTool(),
+    new VisitWebpageTool(),
+    new VisualizerTool(),
+    new PythonInterpreterTool(),
+];
+
+// Helper: convert our inputs spec to a zod schema
+function inputsToZod(inputs) {
+    const shape = {};
+    for (const [k, spec] of Object.entries(inputs || {})) {
+        let t = spec;
+        let desc;
+        if (typeof spec === 'object' && spec !== null) {
+            t = spec.type || spec.kind || 'any';
+            desc = spec.description || spec.help;
+        }
+        let zt;
+        switch (String(t).toLowerCase()) {
+            case 'string': zt = z.string(); break;
+            case 'integer': zt = z.number().int(); break;
+            case 'number': zt = z.number(); break;
+            case 'boolean': zt = z.boolean(); break;
+            case 'array': zt = z.array(z.any()); break;
+            case 'object': zt = z.object({}).passthrough(); break;
+            default: zt = z.any();
+        }
+        if (spec && spec.nullable) zt = zt.nullable();
+        if (desc) zt = zt.describe(desc);
+        shape[k] = zt;
+    }
+    return Object.keys(shape).length ? z.object(shape).passthrough() : z.object({}).passthrough();
+}
+
+/**
+ * Build a Vercel AI SDK tools map from our class tools.
+ * Keeps backward compatibility while enabling ai.tool usage.
+ */
+export function buildAiTools(sessionId = null) {
+    // Fresh instances so session-aware tools receive sessionId
+    const instances = [
+        new WorkspaceReaderTool(sessionId),
+        new FileDownloaderTool(sessionId),
+        new GoogleSearchTool(),
+        new GoogleScholarSearchTool(),
+        new VisitWebpageTool(),
+        new VisualizerTool(sessionId),
+        new PythonInterpreterTool(),
+    ];
+
+    const tools = {};
+    for (const t of instances) {
+        tools[t.name] = aiTool({
+            description: t.description || t.name,
+            inputSchema: inputsToZod(t.inputs || {}),
+            execute: async (args) => t.execute(args || {}),
+        });
+    }
+    return tools;
+}
+
+
+export default {
+    DEFAULT_TOOLS,
+    Tool,
+    GoogleSearchTool,
+    GoogleScholarSearchTool,
+    VisitWebpageTool,
+    WorkspaceReaderTool,
+    FileDownloaderTool,
+    VisualizerTool,
+    PythonInterpreterTool,
+    truncateContent,
+    encodeImage,
+    buildAiTools
+};

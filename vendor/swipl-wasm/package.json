@@ -1,0 +1,129 @@
+{
+  "name": "swipl-wasm",
+  "version": "5.1.3",
+  "contributors": [
+    "Raivo Laanemets",
+    "Jesse Wright",
+    "Jan Wielemaker"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SWI-Prolog/npm-swipl-wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SWI-Prolog/npm-swipl-wasm/issues"
+  },
+  "homepage": "https://github.com/SWI-Prolog/npm-swipl-wasm#README",
+  "license": "BSD-2-Clause",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.35.0",
+    "@octokit/rest": "^22.0.0",
+    "@qiwi/semantic-release-gh-pages-plugin": "^5.4.3",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^24.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.43.0",
+    "@typescript-eslint/parser": "^8.32.1",
+    "eslint": "^9.35.0",
+    "globals": "^16.3.0",
+    "http-server": "^14.1.1",
+    "mocha": "^11.7.2",
+    "node-static": "^0.7.11",
+    "npm-run-all": "^4.1.5",
+    "puppeteer": "^24.19.0",
+    "semantic-release": "^24.2.7",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "webpack": "^5.101.3",
+    "webpack-cli": "^6.0.1"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.data",
+    "dist/**/*.wasm"
+  ],
+  "scripts": {
+    "build:wasm-docker:build": "docker build --build-arg SWIPL_VERSION=$npm_package_config_swipl_version --build-arg SWIPL_COMMIT=$npm_package_config_swipl_commit --build-arg EMSDK_VERSION=$npm_package_config_emsdk_version --build-arg ZLIB_VERSION=$npm_package_config_zlib_version --build-arg PCRE2_NAME=$npm_package_config_pcre2_name -t swipl-wasm-image docker",
+    "build:wasm-docker:create": "docker create --name swipl-wasm swipl-wasm-image",
+    "build:wasm-docker:remove": "docker rm swipl-wasm",
+    "build:wasm-docker:extract:data": "docker cp swipl-wasm:/swipl-devel/build.wasm/src/swipl-web.data dist/swipl/swipl-web.data",
+    "build:wasm-docker:extract:wasm": "docker cp swipl-wasm:/swipl-devel/build.wasm/src/swipl-web.wasm dist/swipl/swipl-web.wasm",
+    "build:wasm-docker:extract:web": "docker cp swipl-wasm:/swipl-devel/build.wasm/src/swipl-web.js dist/swipl/swipl-web.js",
+    "build:wasm-docker:extract:bundle": "docker cp swipl-wasm:/swipl-devel/build.wasm/src/swipl-bundle.js dist/swipl/swipl-bundle.js",
+    "build:wasm-docker:extract:bundleNoData": "docker cp swipl-wasm:/swipl-devel/build.wasm/src/swipl-bundle-no-data.js dist/swipl/swipl-bundle-no-data.js",
+    "build:wasm-docker:extract:node": "docker cp swipl-wasm:/swipl-devel/build.wasm/src/swipl-web.js dist/swipl/swipl.js",
+    "build:wasm-docker:extract": "run-s build:wasm-docker:extract:*",
+    "build:wasm-docker": "run-s build:wasm-docker:build build:wasm-docker:create build:wasm-docker:extract build:wasm-docker:remove",
+    "build": "run-s build:wasm-docker && tsc",
+    "tsc": "tsc",
+    "test:serve-http": "http-server . -c-1",
+    "test:node": "mocha tests/node.js --timeout 50000",
+    "test:browser": "mocha tests/browser.js --timeout 50000",
+    "test:minimal": "cd examples/generation && npm ci && npm run build:image && npm run test",
+    "test": "run-s test:node test:browser test:minimal",
+    "lint:types": "eslint dist/**/*.ts",
+    "lint:tests": "eslint tests/**/*.js",
+    "lint": "run-s lint:types lint:tests",
+    "update:dep:emsdk": "tsx scripts/get-latest-emsdk.mts",
+    "update:dep:pcre2": "tsx scripts/get-latest-pcre2.mts",
+    "update:dep:swipl": "tsx scripts/get-latest-swipl.mts",
+    "update:dep:zlib": "tsx scripts/get-latest-zlib.mts",
+    "update:dep": "run-s update:dep:*",
+    "bundle:webpack": "webpack --config webpack.config.js",
+    "bundle:latest": "ts-node scripts/post-webpack"
+  },
+  "config": {
+    "swipl": {
+      "version": "9.3.30",
+      "commit": "5da23ca86afd06a67ea512e836128150e4e30933",
+      "name": "V9.3.30"
+    },
+    "emsdk": {
+      "version": "4.0.14",
+      "commit": "eff90ca04a3785f571a8095b3a42b63799cf384a",
+      "name": "4.0.14"
+    },
+    "zlib": {
+      "version": "1.3.1"
+    },
+    "pcre2": {
+      "version": "10.46.0",
+      "commit": "b2bd4254b379b9d7dc9a3dda060a7e27009ccdff",
+      "name": "pcre2-10.46"
+    }
+  },
+  "bin": {
+    "swipl-generate": "dist/bin/index.js"
+  },
+  "release": {
+    "branches": [
+      "master"
+    ],
+    "verifyConditions": [
+      "@semantic-release/npm",
+      "@semantic-release/github",
+      "@qiwi/semantic-release-gh-pages-plugin"
+    ],
+    "publish": [
+      "@semantic-release/npm",
+      "@semantic-release/github",
+      [
+        "@qiwi/semantic-release-gh-pages-plugin",
+        {
+          "msg": "add version <%= nextRelease.gitTag %>",
+          "branch": "pages",
+          "add": true,
+          "src": "bundle"
+        }
+      ]
+    ]
+  },
+  "dependencies": {
+    "@types/emscripten": "^1.41.1"
+  }
+}

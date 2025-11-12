@@ -1,0 +1,35 @@
+{
+  "database": "e-commerce",
+  "entities": [
+    {
+      "name": "User",
+      "attributes": ["id", "email", "name", "created_at"],
+      "relationships": [
+        {"type": "has_many", "entity": "Order"}
+      ]
+    },
+    {
+      "name": "Order",
+      "attributes": ["id", "user_id", "total", "status", "order_date"],
+      "relationships": [
+        {"type": "belongs_to", "entity": "User"},
+        {"type": "has_many", "entity": "OrderItem"}
+      ]
+    },
+    {
+      "name": "OrderItem",
+      "attributes": ["id", "order_id", "product_id", "quantity", "price"],
+      "relationships": [
+        {"type": "belongs_to", "entity": "Order"},
+        {"type": "belongs_to", "entity": "Product"}
+      ]
+    },
+    {
+      "name": "Product",
+      "attributes": ["id", "name", "description", "price", "stock"],
+      "relationships": [
+        {"type": "has_many", "entity": "OrderItem"}
+      ]
+    }
+  ]
+}

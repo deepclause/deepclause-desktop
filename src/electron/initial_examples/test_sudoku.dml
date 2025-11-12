@@ -1,0 +1,98 @@
+% @-Predicate specifications
+
+parse_sudoku_string_to_prolog(String, List) :-
+    @("You are given a string containing a sudoku in the format `[[5,3,0,0,7,0,0,0,0], [6,0,0,1,9,5,0,0,0], ...]`, please parse this into a valid prolog list term and output it in the List variable. Do not use 0 for blank fields, instead use an underscore to denote a blank field.").
+
+format_solved_grid(SolvedGrid, MarkdownGrid) :-
+    @("Take the `SolvedGrid`, which is a list of lists of numbers (1-9), and format it into a clean, human-readable markdown table representing the Sudoku board. Add separators for the 3x3 blocks. The output `MarkdownGrid` should be a single markdown string.").
+
+find_online_solvers(SearchResults, SolverLinksSummary) :-
+    @("Analyze the `SearchResults` for 'online sudoku solver from image'. Extract the top 2 most promising URLs that lead to a tool where a user can upload an image to solve a Sudoku. Format the output as a markdown bulleted list string in `SolverLinksSummary`.").
+
+% Sudoku solver using Constraint Logic Programming over Finite Domains (CLP(FD))
+% This is a standard, well-known Prolog implementation for solving Sudoku.
+sudoku(Rows) :-
+    % Ensure the grid is 9x9
+    length(Rows, 9),
+    maplist(same_length(Rows), Rows),
+    % Flatten the grid into a single list of variables
+    append(Rows, Vs),
+    % The domain for each variable is 1 to 9
+    Vs ins 1..9,
+    % All numbers in each row must be unique
+    maplist(all_distinct, Rows),
+    % Transpose the grid to get columns, and ensure they are also unique
+    transpose(Rows, Columns),
+    maplist(all_distinct, Columns),
+    % Define the 3x3 blocks and ensure they are unique
+    Rows = [A,B,C,D,E,F,G,H,I],
+    blocks(A, B, C),
+    blocks(D, E, F),
+    blocks(G, H, I),
+    % Find a valid assignment of numbers to the variables
+    maplist(labeling([ff]), Rows).
+
+% Helper for the solver: defines the 3x3 block constraint
+blocks([], [], []).
+blocks([N1,N2,N3|Ns1], [N4,N5,N6|Ns2], [N7,N8,N9|Ns3]) :-
+    all_distinct([N1,N2,N3,N4,N5,N6,N7,N8,N9]),
+    blocks(Ns1, Ns2, Ns3).
+
+% Main agent logic
+
+% Branch 1: Successful image recognition and solving
+agent_main :-
+    param("image_path", "The path to the image file containing the Sudoku puzzle.", ImagePath),
+    ( ImagePath \= "" -> true ; (log(error="The 'image_path' parameter is missing."), fail) ),
+    log(task="Attempting to solve Sudoku directly from the image: '{ImagePath}'."),
+
+    % Step 1: Use the visualizer tool to perform OCR and extract the grid
+    log(task="Analyzing image to extract the puzzle grid and numbers."),
+    tool(visualizer(ImagePath,"Identify the Sudoku grid. Perform 
+Optical Character Recognition (OCR) on each cell. 
+Represent the grid as a Prolog list of lists, where each inner list is a row. 
+Use the integer 0 to represent empty cells. The output `SudokuGrid` must be in this 
+format, for example: `[[5,3,0,0,7,0,0,0,0], [6,0,0,1,9,5,0,0,0], ...]`. 
+If a valid 9x9 grid cannot be reliably extracted, then output nothing"), ToolOutput),
+    parse_sudoku_string_to_prolog(ToolOutput, UnsolvedGrid),
+    ( UnsolvedGrid \= [] -> log(task="Successfully extracted the grid from the image.") ; (log(error="Could not recognize a valid Sudoku grid in the image."), fail) ),
+
+    yield("Grid = {UnsolvedGrid}"),
+
+    % Step 2: Solve the puzzle using the CLP(FD) solver
+    log(task="Solving the puzzle..."),
+    sudoku(UnsolvedGrid), % This predicate solves the grid by unifying the variables
+    log(task="Puzzle solved successfully."),
+
+    % Step 3: Format the solved grid into a markdown table
+    log(task="Formatting the solution for display."),
+    format_solved_grid(UnsolvedGrid, SolvedGridMarkdown),
+
+    end_thinking,
+    system("You are a helpful assistant that has just solved a Sudoku puzzle from an image for the user."),
+    observation("I have successfully analyzed the image, extracted the puzzle, and found the solution."),
+    observation(SolvedGridMarkdown),
+    chat("Please give me the solution to this Sudoku.").
+
+% Branch 2: Fallback if image recognition fails, suggest online tools
+agent_main :-
+    param("image_path", "The path to the image file containing the Sudoku puzzle.", ImagePath),
+    log(task="Direct image analysis failed. Searching for online tools as an alternative."),
+
+    % This branch runs if extract_sudoku_grid_from_image fails in the first branch.
+    % Step 1: Search for online Sudoku solvers
+    tool(web_search("online sudoku solver from image", num=5), SearchResults),
+
+    % Step 2: Extract the most promising links
+    find_online_solvers(SearchResults, SolverLinks),
+    ( SolverLinks \= "" -> true ; (log(error="Could not find any suitable online tools."), fail) ),
+
+    end_thinking,
+    system("You are a helpful assistant explaining a limitation and providing a workaround."),
+    chat("I was unable to automatically recognize the Sudoku puzzle from the image you provided. This can sometimes happen due to image quality, angle, or lighting.\n\nHowever, you can use one of these online tools to solve it by uploading your image:\n{SolverLinks}").
+
+% Branch 3: Final fallback for unexpected errors
+agent_main :-
+    log(error="A critical and unexpected error occurred while trying to solve the Sudoku puzzle."),
+    end_thinking,
+    chat("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

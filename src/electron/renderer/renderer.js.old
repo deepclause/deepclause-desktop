@@ -1,0 +1,745 @@
+// Renderer process JavaScript
+let isProcessing = false;
+let currentPaths = null;
+
+// DOM elements
+const chatOutput = document.getElementById('chatOutput');
+const userInput = document.getElementById('userInput');
+const sendBtn = document.getElementById('sendBtn');
+const selectWorkspaceBtn = document.getElementById('selectWorkspaceBtn');
+const listFilesBtn = document.getElementById('listFilesBtn');
+const refreshFilesBtn = document.getElementById('refreshFilesBtn');
+const refreshWorkspaceBtn = document.getElementById('refreshWorkspaceBtn');
+const toggleDmlPaneBtn = document.getElementById('toggleDmlPaneBtn');
+const toggleWorkspacePaneBtn = document.getElementById('toggleWorkspacePaneBtn');
+const abortBtn = document.getElementById('abortBtn');
+const fileList = document.getElementById('fileList');
+const workspaceList = document.getElementById('workspaceList');
+const dmlPane = document.getElementById('dmlPane');
+const workspacePane = document.getElementById('workspacePane');
+const statusText = document.getElementById('statusText');
+const pathInfo = document.getElementById('pathInfo');
+
+// Pane visibility state
+let dmlPaneVisible = true;
+let workspacePaneVisible = true;
+
+// Initialize the app
+async function initialize() {
+    updateStatus('Initializing agent...');
+    
+    const result = await window.electronAPI.initializeAgent();
+    
+    if (result.success) {
+        currentPaths = result.paths;
+        updateStatus('Ready');
+        updatePathInfo();
+        await loadFileList();
+        await loadWorkspaceFiles();
+    } else {
+        updateStatus('Initialization failed: ' + result.error);
+        addMessage('system', `❌ Failed to initialize: ${result.error}`);
+    }
+}
+
+// Toggle DML pane
+function toggleDmlPane() {
+    dmlPaneVisible = !dmlPaneVisible;
+    if (dmlPaneVisible) {
+        dmlPane.classList.remove('hidden');
+        toggleDmlPaneBtn.classList.add('active');
+    } else {
+        dmlPane.classList.add('hidden');
+        toggleDmlPaneBtn.classList.remove('active');
+    }
+}
+
+// Toggle workspace pane
+function toggleWorkspacePane() {
+    workspacePaneVisible = !workspacePaneVisible;
+    if (workspacePaneVisible) {
+        workspacePane.classList.remove('hidden');
+        toggleWorkspacePaneBtn.classList.add('active');
+    } else {
+        workspacePane.classList.add('hidden');
+        toggleWorkspacePaneBtn.classList.remove('active');
+    }
+}
+
+// Update status bar
+function updateStatus(message) {
+    statusText.textContent = message;
+}
+
+// Update path info
+function updatePathInfo() {
+    if (currentPaths) {
+        pathInfo.textContent = `Workspace: ${currentPaths.workspace}`;
+        pathInfo.title = `DML Examples: ${currentPaths.dmlExamples}\nConfig: ${currentPaths.config}`;
+    }
+}
+
+// Add a message to the chat output
+function addMessage(type, content, raw = false) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message message-${type}`;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'timestamp';
+    timeSpan.textContent = timestamp;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+    
+    if (raw) {
+        contentDiv.textContent = content;
+    } else {
+        contentDiv.innerHTML = formatMessage(content);
+    }
+    
+    messageDiv.appendChild(timeSpan);
+    messageDiv.appendChild(contentDiv);
+    chatOutput.appendChild(messageDiv);
+    
+    // Auto-scroll to bottom
+    chatOutput.scrollTop = chatOutput.scrollHeight;
+}
+
+// Format message content (simple markdown-like formatting)
+function formatMessage(text) {
+    // Escape HTML first
+    text = text.replace(/&/g, '&amp;')
+               .replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;');
+    
+    // Convert code blocks
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    // Convert bold
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    
+    // Convert line breaks
+    text = text.replace(/\n/g, '<br>');
+    
+    // Convert emoji shortcuts
+    text = text.replace(/:\)/g, '😊')
+               .replace(/:\(/g, '😞')
+               .replace(/<3/g, '❤️');
+    
+    return text;
+}
+
+// Process user input
+async function processInput() {
+    const input = userInput.value.trim();
+    
+    if (!input || isProcessing) {
+        return;
+    }
+    
+    // Clear input
+    userInput.value = '';
+    userInput.style.height = 'auto';
+    
+    // Add user message
+    addMessage('user', input);
+    
+    // Show processing state
+    isProcessing = true;
+    sendBtn.disabled = true;
+    abortBtn.style.display = 'inline-block';
+    updateStatus('Processing...');
+    
+    // Reset streaming message
+    currentStreamingMessage = null;
+    
+    try {
+        // Check for special commands
+        if (input.startsWith('/')) {
+            await handleCommand(input);
+        } else {
+            // Process as natural language - result will be streamed via onDmlOutputChunk
+            const result = await window.electronAPI.processInput(input);
+            
+            // If streaming failed or no output was streamed, show the result
+            if (!result.success) {
+                addMessage('error', `❌ Error: ${result.error}`);
+            } else if (!currentStreamingMessage) {
+                // Only add message if nothing was streamed (shouldn't happen normally)
+                addMessage('agent', result.result);
+            }
+        }
+    } catch (error) {
+        addMessage('error', `❌ Error: ${error.message}`);
+    } finally {
+        // Finalize any streaming message
+        finalizeStreamingMessage();
+        
+        isProcessing = false;
+        sendBtn.disabled = false;
+        abortBtn.style.display = 'none';
+        updateStatus('Ready');
+    }
+}
+
+// Handle special commands
+async function handleCommand(command) {
+    const parts = command.split(' ');
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1).join(' ');
+    
+    switch (cmd) {
+        case '/help':
+            showHelp();
+            break;
+            
+        case '/create':
+            if (args) {
+                const result = await window.electronAPI.createDml(args);
+                if (result.success) {
+                    addMessage('agent', `✅ DML code generated:\n\`\`\`\n${result.result}\n\`\`\``);
+                } else {
+                    addMessage('error', `❌ ${result.error}`);
+                }
+            } else {
+                addMessage('system', '❌ Usage: /create <description>');
+            }
+            break;
+            
+        case '/save':
+            if (args) {
+                const result = await window.electronAPI.saveDml(args);
+                if (result.success) {
+                    addMessage('system', `✅ ${result.result}`);
+                    await loadFileList();
+                } else {
+                    addMessage('error', `❌ ${result.error}`);
+                }
+            } else {
+                addMessage('system', '❌ Usage: /save <filename>');
+            }
+            break;
+            
+        case '/run':
+            if (args) {
+                // Reset streaming for new execution
+                currentStreamingMessage = null;
+                
+                const result = await window.electronAPI.runDmlFile(args, '{}');
+                
+                // Finalize streaming message
+                finalizeStreamingMessage();
+                
+                if (result.success) {
+                    // Only show final message if no streaming occurred
+                    if (!currentStreamingMessage) {
+                        addMessage('agent', `🚀 Executed ${args}:\n${result.result}`);
+                    }
+                } else {
+                    addMessage('error', `❌ ${result.error}`);
+                }
+            } else {
+                addMessage('system', '❌ Usage: /run <filename>');
+            }
+            break;
+            
+        case '/list':
+            await listFiles();
+            break;
+            
+        default:
+            addMessage('system', `❌ Unknown command: ${cmd}. Type /help for help.`);
+    }
+}
+
+// Show help message
+function showHelp() {
+    const helpText = `
+**Available Commands:**
+
+- **/help** - Show this help message
+- **/create <description>** - Generate new DML code
+- **/save <filename>** - Save last generated DML
+- **/run <filename>** - Run a DML file
+- **/list** - List all DML files
+
+**Natural Language:**
+Just type what you want to do, and the agent will find or create the right DML files.
+
+**Examples:**
+- "Search for information about Python"
+- "Analyze this document"
+- "/create a script to download papers"
+- "/run search.dml"
+`;
+    addMessage('system', helpText);
+}
+
+// List DML files
+async function listFiles() {
+    const result = await window.electronAPI.listDmlFiles();
+    if (result.success) {
+        addMessage('agent', result.result, true);
+    } else {
+        addMessage('error', `❌ ${result.error}`);
+    }
+}
+
+// Load file list in sidebar
+async function loadFileList() {
+    fileList.innerHTML = '<div class="loading">Loading files...</div>';
+    
+    const result = await window.electronAPI.listDmlFiles();
+    
+    if (result.success) {
+        const files = parseFileList(result.result);
+        renderFileList(files);
+    } else {
+        fileList.innerHTML = `<div class="error">Failed to load files: ${result.error}</div>`;
+    }
+}
+
+// Load workspace files
+async function loadWorkspaceFiles() {
+    workspaceList.innerHTML = '<div class="loading">Loading workspace...</div>';
+    
+    const result = await window.electronAPI.listWorkspaceFiles();
+    
+    if (result.success) {
+        renderWorkspaceFiles(result.files);
+    } else {
+        workspaceList.innerHTML = `<div class="error">Failed to load workspace: ${result.error}</div>`;
+    }
+}
+
+// Render workspace files
+function renderWorkspaceFiles(files) {
+    if (files.length === 0) {
+        workspaceList.innerHTML = '<div class="empty">Workspace is empty</div>';
+        return;
+    }
+    
+    workspaceList.innerHTML = '';
+    
+    // Group files by type
+    const directories = files.filter(f => f.type === 'directory');
+    const regularFiles = files.filter(f => f.type === 'file');
+    
+    // Render directories first
+    directories.forEach(dir => {
+        const item = createWorkspaceItem(dir);
+        workspaceList.appendChild(item);
+    });
+    
+    // Then render files
+    regularFiles.forEach(file => {
+        const item = createWorkspaceItem(file);
+        workspaceList.appendChild(item);
+    });
+}
+
+// Create workspace item element
+function createWorkspaceItem(item) {
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'workspace-item';
+    
+    if (item.type === 'directory') {
+        itemDiv.classList.add('workspace-directory');
+    }
+    
+    const itemName = document.createElement('div');
+    itemName.className = 'workspace-item-name';
+    
+    const icon = item.type === 'directory' ? '📁' : getFileIcon(item.name);
+    itemName.innerHTML = `<span class="workspace-icon">${icon}</span>${item.name}`;
+    
+    itemDiv.appendChild(itemName);
+    
+    if (item.type === 'file' && item.size !== undefined) {
+        const meta = document.createElement('div');
+        meta.className = 'workspace-item-meta';
+        meta.textContent = `${formatFileSize(item.size)}`;
+        if (item.modified) {
+            meta.textContent += ` • ${formatDate(item.modified)}`;
+        }
+        itemDiv.appendChild(meta);
+    }
+    
+    // Click handler
+    itemDiv.addEventListener('click', () => {
+        handleWorkspaceItemClick(item);
+    });
+    
+    return itemDiv;
+}
+
+// Get file icon based on extension
+function getFileIcon(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    const iconMap = {
+        'dml': '📝',
+        'txt': '📄',
+        'md': '📋',
+        'json': '⚙️',
+        'pdf': '📕',
+        'png': '🖼️',
+        'jpg': '🖼️',
+        'jpeg': '🖼️',
+        'gif': '🖼️',
+        'py': '🐍',
+        'js': '📜',
+        'html': '🌐',
+        'css': '🎨',
+        'zip': '📦',
+        'tar': '📦',
+        'gz': '📦'
+    };
+    return iconMap[ext] || '📄';
+}
+
+// Format file size
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// Format date
+function formatDate(dateStr) {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
+    return date.toLocaleDateString();
+}
+
+// Handle workspace item click
+function handleWorkspaceItemClick(item) {
+    if (item.type === 'directory') {
+        addMessage('system', `📁 Directory: ${item.path}`);
+    } else {
+        userInput.value = `Tell me about the file: ${item.path}`;
+        userInput.focus();
+    }
+}
+
+// Parse file list from text result
+function parseFileList(text) {
+    const files = [];
+    const lines = text.split('\n');
+    let currentFile = null;
+    
+    for (const line of lines) {
+        if (line.startsWith('📄 ')) {
+            if (currentFile) {
+                files.push(currentFile);
+            }
+            currentFile = {
+                name: line.substring(2).trim(),
+                description: '',
+                parameters: []
+            };
+        } else if (currentFile && line.trim().startsWith('Parameters:')) {
+            const params = line.substring(line.indexOf(':') + 1).trim();
+            currentFile.parameters = params.split(',').map(p => p.trim()).filter(p => p);
+        } else if (currentFile && line.trim() && !line.startsWith('Available')) {
+            currentFile.description = line.trim();
+        }
+    }
+    
+    if (currentFile) {
+        files.push(currentFile);
+    }
+    
+    return files;
+}
+
+// Render file list in sidebar
+function renderFileList(files) {
+    if (files.length === 0) {
+        fileList.innerHTML = '<div class="empty">No DML files found</div>';
+        return;
+    }
+    
+    fileList.innerHTML = '';
+    
+    for (const file of files) {
+        const fileItem = document.createElement('div');
+        fileItem.className = 'file-item';
+        
+        const fileName = document.createElement('div');
+        fileName.className = 'file-name';
+        fileName.textContent = file.name;
+        
+        const fileDesc = document.createElement('div');
+        fileDesc.className = 'file-description';
+        fileDesc.textContent = file.description || 'No description';
+        
+        if (file.parameters.length > 0) {
+            const fileParams = document.createElement('div');
+            fileParams.className = 'file-parameters';
+            fileParams.textContent = `Params: ${file.parameters.join(', ')}`;
+            fileItem.appendChild(fileParams);
+        }
+        
+        fileItem.appendChild(fileName);
+        fileItem.appendChild(fileDesc);
+        
+        // Click to run file
+        fileItem.addEventListener('click', () => {
+            userInput.value = `/run ${file.name}`;
+            userInput.focus();
+        });
+        
+        // Right-click for context menu (view/analyze)
+        fileItem.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            userInput.value = `/analyze ${file.name}`;
+        });
+        
+        fileList.appendChild(fileItem);
+    }
+}
+
+// Handle abort button
+async function handleAbort() {
+    if (isProcessing) {
+        await window.electronAPI.abortExecution();
+        
+        // Finalize any streaming message
+        finalizeStreamingMessage();
+        
+        addMessage('system', '⚠️ Execution aborted');
+        isProcessing = false;
+        sendBtn.disabled = false;
+        abortBtn.style.display = 'none';
+        updateStatus('Ready');
+    }
+}
+
+// Handle select workspace
+async function handleSelectWorkspace() {
+    const result = await window.electronAPI.selectWorkspace();
+    if (result.success) {
+        addMessage('system', `✅ Workspace changed to: ${result.path}`);
+        const paths = await window.electronAPI.getPaths();
+        if (paths.success) {
+            currentPaths = paths.paths;
+            updatePathInfo();
+        }
+    }
+}
+
+// Auto-resize textarea
+userInput.addEventListener('input', () => {
+    userInput.style.height = 'auto';
+    userInput.style.height = userInput.scrollHeight + 'px';
+});
+
+// Handle Enter key (Send) and Shift+Enter (New line)
+userInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        processInput();
+    }
+});
+
+// Event listeners
+sendBtn.addEventListener('click', processInput);
+selectWorkspaceBtn.addEventListener('click', handleSelectWorkspace);
+listFilesBtn.addEventListener('click', listFiles);
+refreshFilesBtn.addEventListener('click', loadFileList);
+refreshWorkspaceBtn.addEventListener('click', loadWorkspaceFiles);
+toggleDmlPaneBtn.addEventListener('click', toggleDmlPane);
+toggleWorkspacePaneBtn.addEventListener('click', toggleWorkspacePane);
+abortBtn.addEventListener('click', handleAbort);
+
+// Initialize toggle button states
+toggleDmlPaneBtn.classList.add('active');
+toggleWorkspacePaneBtn.classList.add('active');
+
+// Listen for input requests from DML
+window.electronAPI.onRequestUserInput((data) => {
+    showInputDialog(data.requestId, data.promptText);
+});
+
+// Listen for streaming output chunks from DML
+let currentStreamingMessage = null;
+
+window.electronAPI.onDmlOutputChunk((chunk) => {
+    handleOutputChunk(chunk);
+});
+
+// Handle streaming output chunk
+function handleOutputChunk(chunk) {
+    // If no current streaming message, create one
+    if (!currentStreamingMessage) {
+        currentStreamingMessage = createStreamingMessage();
+    }
+    
+    // Append chunk to streaming message
+    appendToStreamingMessage(chunk);
+}
+
+// Create a new streaming message container
+function createStreamingMessage() {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message message-streaming';
+    messageDiv.id = `streaming-${Date.now()}`;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'timestamp';
+    timeSpan.textContent = timestamp;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content streaming-content';
+    contentDiv.dataset.raw = ''; // Store raw content
+    
+    messageDiv.appendChild(timeSpan);
+    messageDiv.appendChild(contentDiv);
+    chatOutput.appendChild(messageDiv);
+    
+    // Auto-scroll to bottom
+    chatOutput.scrollTop = chatOutput.scrollHeight;
+    
+    return messageDiv;
+}
+
+// Append chunk to streaming message
+function appendToStreamingMessage(chunk) {
+    if (!currentStreamingMessage) return;
+    
+    const contentDiv = currentStreamingMessage.querySelector('.streaming-content');
+    if (contentDiv) {
+        // Append to raw content
+        contentDiv.dataset.raw += chunk;
+        
+        // Update displayed content (escape HTML but preserve formatting)
+        const formatted = escapeHtml(contentDiv.dataset.raw);
+        contentDiv.innerHTML = formatted.replace(/\n/g, '<br>');
+        
+        // Auto-scroll to bottom
+        chatOutput.scrollTop = chatOutput.scrollHeight;
+    }
+}
+
+// Finalize streaming message (convert to regular message)
+function finalizeStreamingMessage() {
+    if (currentStreamingMessage) {
+        currentStreamingMessage.classList.remove('message-streaming');
+        currentStreamingMessage.classList.add('message-agent');
+        currentStreamingMessage = null;
+    }
+}
+
+// Helper to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Show input dialog modal
+function showInputDialog(requestId, promptText) {
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = `modal-${requestId}`;
+    
+    // Create modal content
+    const modal = document.createElement('div');
+    modal.className = 'modal-content';
+    
+    const title = document.createElement('h3');
+    title.textContent = 'Input Required';
+    
+    const prompt = document.createElement('p');
+    prompt.className = 'modal-prompt';
+    prompt.textContent = promptText;
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'modal-input';
+    input.placeholder = 'Enter your response...';
+    input.id = `input-${requestId}`;
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.className = 'modal-buttons';
+    
+    const submitBtn = document.createElement('button');
+    submitBtn.className = 'btn btn-primary';
+    submitBtn.textContent = 'Submit';
+    submitBtn.onclick = () => submitInput(requestId);
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-secondary';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = () => cancelInput(requestId);
+    
+    buttonContainer.appendChild(submitBtn);
+    buttonContainer.appendChild(cancelBtn);
+    
+    modal.appendChild(title);
+    modal.appendChild(prompt);
+    modal.appendChild(input);
+    modal.appendChild(buttonContainer);
+    
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    
+    // Focus input and allow Enter to submit
+    input.focus();
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            submitInput(requestId);
+        } else if (e.key === 'Escape') {
+            cancelInput(requestId);
+        }
+    });
+    
+    // Show a message in chat
+    addMessage('system', `⌛ Waiting for input: ${promptText}`);
+}
+
+// Submit input response
+async function submitInput(requestId) {
+    const input = document.getElementById(`input-${requestId}`);
+    const userInput = input ? input.value : '';
+    
+    await window.electronAPI.respondToInput(requestId, userInput);
+    
+    // Remove modal
+    const modal = document.getElementById(`modal-${requestId}`);
+    if (modal) {
+        modal.remove();
+    }
+    
+    addMessage('user', `📝 Input provided: ${userInput}`);
+}
+
+// Cancel input request
+async function cancelInput(requestId) {
+    await window.electronAPI.respondToInput(requestId, '');
+    
+    // Remove modal
+    const modal = document.getElementById(`modal-${requestId}`);
+    if (modal) {
+        modal.remove();
+    }
+    
+    addMessage('system', '❌ Input request cancelled');
+}
+
+// Initialize on load
+initialize();

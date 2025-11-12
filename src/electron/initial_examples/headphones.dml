@@ -1,0 +1,96 @@
+% @-Predicate specifications
+
+generate_headphone_search_queries(Criteria, SearchQueriesList) :-
+    @("Based on the user's `Criteria` for headphones (e.g., wireless, active noise cancellation, price), generate a list of 3-5 effective web search queries. The queries should be varied to find review articles, product listings, and comparisons. The output `SearchQueriesList` must be a Prolog list of strings.").
+
+extract_candidate_products(SearchResults, Criteria, CandidateProductsList) :-
+    @("Analyze the provided `SearchResults` for headphones matching the `Criteria`. Identify and extract the names of specific headphone models mentioned as potential candidates. The output `CandidateProductsList` should be a Prolog list of unique product name strings (e.g., ['Soundcore Space One', 'Anker Life Q30']). If no candidates are found, this predicate should fail.").
+
+verify_product_details(ProductSearchResults, ProductName, Criteria, VerifiedProduct) :-
+    @("Analyze the `ProductSearchResults` for a specific `ProductName`. Verify that the product meets all the specified `Criteria` (is wireless, has active noise cancellation, and costs less than 100 USD). If all criteria are met, extract the product's name, its current price, and a brief summary of its key features. The output `VerifiedProduct` should be a structured Prolog term: `product(Name, Price, Summary)`. If the product does not meet the criteria or the information is not found, this predicate should fail.").
+
+format_products_as_markdown_table(VerifiedProductsList, MarkdownTable) :-
+    @("Take a `VerifiedProductsList` of structured `product(Name, Price, Summary)` terms. Format this list into a clean, human-readable markdown table with the headers 'Model', 'Price (USD)', and 'Summary'. The output `MarkdownTable` should be a single markdown string.").
+
+summarize_findings_from_search(SearchResults, Criteria, Summary) :-
+    @("Analyze the `SearchResults` from a web search based on the user's `Criteria`. Synthesize the information from the titles and snippets to create a concise, high-level summary of the best options available. This is a fallback for when detailed product verification is not possible. The output `Summary` should be a single markdown string.").
+
+% Helper predicate to write content to a file
+write_to_file(FilePath, Content) :-
+    open(FilePath, write, Stream),
+    format(Stream, Content, []),
+    close(Stream).
+
+% Main agent logic
+
+% Branch 1: Comprehensive search, verification, and table generation
+agent_main :-
+    Criteria = "wireless, active noise cancellation, less than 100 USD",
+    log("Starting a detailed search for headphones matching: '{Criteria}'."),
+
+    % Step 1: Generate and execute search queries
+    generate_headphone_search_queries(Criteria, SearchQueries),
+    log("Generated search queries: ~w", [SearchQueries]),
+    findall(Result, (member(Query, SearchQueries), tool(web_search(Query, num=7), Result)), AllResultsLists),
+    atomic_list_concat(AllResultsLists, " ", AllResults),
+
+    % Step 2: Extract candidate products from initial search
+    extract_candidate_products(AllResults, Criteria, CandidateProducts),
+    ( CandidateProducts \= [] -> log("Identified potential candidates: ~w", [CandidateProducts]) ; (log(error="Could not identify any candidate products from the initial search."), fail) ),
+
+    % Step 3: Verify details for each candidate
+    log("Verifying features and price for each candidate..."),
+    findall(VerifiedProduct, (
+        member(Product, CandidateProducts),
+        format(string(VerifyQuery), "~w price and features", [Product]),
+        tool(web_search(VerifyQuery, num=3), ProductResults),
+        verify_product_details(ProductResults, Product, Criteria, VerifiedProduct)
+    ), VerifiedProducts),
+    ( VerifiedProducts \= [] -> log("Successfully verified ~w products.", [length(VerifiedProducts)]) ; (log(error="Failed to verify the details of any candidate products."), fail) ),
+
+    % Step 4: Format results as a markdown table and save to file
+    log("Formatting final list into a markdown table."),
+    format_products_as_markdown_table(VerifiedProducts, MarkdownTable),
+    write_to_file("headphone_recommendations.md", MarkdownTable),
+    log("Recommendations saved to 'headphone_recommendations.md'."),
+
+    end_thinking,
+    system("You are a helpful shopping assistant. You have completed a search for products based on user criteria."),
+    observation("I have searched for headphones that are wireless, have active noise cancellation, and cost less than $100. I have compiled a list of products that meet these requirements."),
+    observation(MarkdownTable),
+    observation("I have finished my search and created a list of recommended headphones for you. I've also saved this list in a file named `headphone_recommendations.md` in your workspace."),
+    chat("Please summarize your findings nd what you just did").
+
+% Branch 2: Fallback to a high-level summary if detailed verification fails
+agent_main :-
+    Criteria = "wireless, active noise cancellation, less than 100 USD",
+    log("Detailed product verification failed. Falling back to a high-level summary based on initial search results."),
+
+    % Step 1: Perform a broad search
+    generate_headphone_search_queries(Criteria, SearchQueries),
+    findall(Result, (member(Query, SearchQueries), tool(web_search(Query, num=10), Result)), AllResultsLists),
+    atomic_list_concat(AllResultsLists, " ", AllResults),
+
+    % Step 2: Summarize findings directly from search results
+    summarize_findings_from_search(AllResults, Criteria, Summary),
+    ( Summary \= "" -> log("Successfully generated a high-level summary.") ; (log(error="Failed to generate a summary from search results."), fail) ),
+
+    end_thinking,
+    system("You are a helpful shopping assistant. You were unable to perform a detailed verification but can provide a summary."),
+    observation(Summary),
+    observation("I was unable to verify the specific price and features for every potential model. However, based on general reviews and search results, here is a summary of promising options that likely meet your criteria for wireless, noise-cancelling headphones under $100:"),
+    chat("Please summarize your findings nd what you just did").
+
+% Branch 3: Fallback if no products are found at all
+agent_main :-
+    Criteria = "wireless, active noise cancellation, less than 100 USD",
+    log(error="Failed to find any relevant products matching the criteria: '{Criteria}'."),
+    end_thinking,
+    system("You are a helpful assistant explaining a failure to find information."),
+    answer("I apologize, but I was unable to find any headphones that clearly match all your criteria: wireless, active noise cancellation, and a price under $100. It's possible the market has shifted, or you may need to consider increasing your budget slightly to find products with these features.").
+
+% Branch 4: Final fallback for unexpected errors
+agent_main :-
+    log(error="A critical and unexpected error occurred during the product search process."),
+    end_thinking,
+    answer("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

@@ -1,0 +1,1 @@
+A react style agent that uses browser tools to accomplish a given task by the user.

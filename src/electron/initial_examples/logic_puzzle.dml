@@ -1,0 +1,83 @@
+% --- Date Definitions ---
+% The initial set of 10 possible dates for the anniversary.
+possible_date(april, 17).
+possible_date(april, 18).
+possible_date(april, 28).
+possible_date(july, 16).
+possible_date(july, 17).
+possible_date(july, 19).
+possible_date(june, 16).
+possible_date(june, 29).
+possible_date(march, 18).
+possible_date(march, 19).
+
+% --- Helper Predicates for Reasoning ---
+
+% Succeeds if a given Day is unique among all possible dates.
+% Bo would know the date immediately if the day was unique.
+day_is_unique(Day) :-
+    findall(Month, possible_date(Month, Day), Months),
+    length(Months, 1).
+
+% Succeeds if a given Month has more than one possible date.
+% This corresponds to "not knowing" the full date.
+month_is_ambiguous(Month) :-
+    findall(Day, possible_date(Month, Day), Days),
+    length(Days, Count),
+    Count > 1.
+
+% --- Filtering based on the statements ---
+
+% Filter 1: Applying Ali's first statement.
+% "I don't know..." -> The month must be ambiguous.
+% "...and I know that Bo does not know it either." -> For Ali's month,
+% every possible day within that month must NOT be a unique day.
+s1_filter(Month, Day) :-
+    possible_date(Month, Day),
+    month_is_ambiguous(Month),
+    forall(possible_date(Month, D_in_Month), \+ day_is_unique(D_in_Month)).
+
+% Filter 2: Applying Bo's statement after Ali's.
+% Bo knows the Day. After hearing Ali's statement, his Day is now unique
+% among the remaining possibilities (s1_filter).
+s2_filter(Month, Day) :-
+    s1_filter(Month, Day),
+    findall(M, s1_filter(M, Day), Months),
+    length(Months, 1).
+
+% Filter 3: Applying Ali's second statement.
+% Ali knows the Month. After Bo's statement, her Month is now unique
+% among the remaining possibilities (s2_filter).
+s3_filter(Month, Day) :-
+    s2_filter(Month, Day),
+    findall(D, s2_filter(Month, D), Days),
+    length(Days, 1).
+
+% --- Main Agent Logic ---
+
+agent_main :-
+    log("Starting logical deduction to find Cam's anniversary."),
+
+    % Step 1: Apply Ali's first statement to get the first set of possibilities.
+    findall(date(M1, D1), s1_filter(M1, D1), Possibilities_S1),
+    log("After Ali's first statement ('I don't know, and I know Bo doesn't know'), the possible dates are reduced to: ~w", [Possibilities_S1]),
+
+    % Step 2: Apply Bo's statement to the reduced set.
+    findall(date(M2, D2), s2_filter(M2, D2), Possibilities_S2),
+    log("After Bo's statement ('I didn't know, but now I do'), the possibilities are further reduced to: ~w", [Possibilities_S2]),
+
+    % Step 3: Apply Ali's final statement to find the unique solution.
+    s3_filter(FinalMonth, FinalDay),
+    log("After Ali's final statement ('Then I also know'), the unique solution is found."),
+
+    end_thinking,
+    system("You are a logic puzzle solver. Present the final answer clearly."),
+    format(string(Answer), "The anniversary is on ~w ~w.", [FinalMonth, FinalDay]),
+    observation(Answer),
+    observation("Based on the logical deductions from Ali's and Bo's statements, I have determined the date of Cam's anniversary. Here is the solution:"),
+    chat("Ok, please show me the solution.").
+
+agent_main :-
+    log(error="The logical deduction failed to produce a unique answer. Please check the problem statement and the initial dates."),
+    end_thinking,
+    answer("I'm sorry, but I was unable to find a unique solution to the logic puzzle. There might be an issue with the constraints provided.").

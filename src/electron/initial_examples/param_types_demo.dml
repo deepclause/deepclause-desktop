@@ -1,0 +1,29 @@
+% Demo of parameter types feature in DeepClause DML
+% This file demonstrates the different parameter input types available
+
+agent_main :-
+    % 1. Standard text parameter (default behavior)
+    param("user_name", "Enter your name", UserName),
+    log("User name: ~w", [UserName]),
+    
+    % 2. File selection parameter
+    param("input_file:file", "Select an input file to process", InputFile),
+    log("Selected file: ~w", [InputFile]),
+    
+    % 3. Single-select dropdown parameter
+    param("priority:select(Low, Medium, High, Critical)", "Select task priority", Priority),
+    log("Selected priority: ~w", [Priority]),
+    
+    % 4. Multi-select dropdown parameter
+    param("tags:multiselect(bug, feature, documentation, testing, performance)", "Select applicable tags", Tags),
+    log("Selected tags: ~w", [Tags]),
+    
+    % 5. Another file parameter example
+    param("config_file:file", "Select configuration file (optional)", ConfigFile),
+    log("Config file: ~w", [ConfigFile]),
+    
+    % Display summary
+    format(string(Summary), 
+           "Parameter Demo Complete!\n\nName: ~w\nFile: ~w\nPriority: ~w\nTags: ~w\nConfig: ~w",
+           [UserName, InputFile, Priority, Tags, ConfigFile]),
+    answer(Summary).

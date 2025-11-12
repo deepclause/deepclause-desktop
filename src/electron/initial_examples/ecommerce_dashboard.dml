@@ -1,0 +1,106 @@
+% Real-world example: E-commerce analytics dashboard
+% This demonstrates analyzing multiple data sources and creating a comprehensive visualization report
+
+agent_main :-
+    log("Starting e-commerce analytics dashboard generation"),
+    
+    % Step 1: Analyze product sales data
+    log("Analyzing product sales"),
+    tool(data_analyzer("sample_sales_data.csv", "full"), SalesAnalysis),
+    
+    % Step 2: Create sales visualizations
+    log("Creating sales trend visualization"),
+    tool(diagram_generator(
+        "bar",
+        "sample_sales_data.csv",
+        "Monthly Sales by Product",
+        "monthly_sales.md"
+    ), SalesChart),
+    
+    log("Creating product distribution pie chart"),
+    tool(diagram_generator(
+        "pie",
+        "sample_sales_data.csv",
+        "Product Sales Distribution",
+        "product_distribution.md"
+    ), DistributionChart),
+    
+    % Step 3: Analyze database schema
+    log("Analyzing database structure"),
+    tool(data_analyzer("database_schema.json", "full"), SchemaAnalysis),
+    
+    % Step 4: Create ER diagram from schema
+    log("Creating entity-relationship diagram"),
+    tool(diagram_generator(
+        "er",
+        "database_schema.json",
+        "E-commerce Database Schema",
+        "database_er.md"
+    ), ErDiagram),
+    
+    % Step 5: Generate executive insights using LLM
+    log("Generating executive summary"),
+    format(string(InsightsPrompt), 
+        "Based on this sales data analysis:\n\n~w\n\nProvide 3-5 key business insights and recommendations.", 
+        [SalesAnalysis]),
+    generate(InsightsPrompt, Insights),
+    
+    % Step 6: Create a process flowchart
+    log("Creating order fulfillment flowchart"),
+    ProcessDesc = "Customer places order -> Validate payment -> Check inventory -> If in stock: Reserve items and Package order and Ship order and Send tracking email -> Update inventory. If out of stock: Send backorder notification and Add to backorder queue",
+    tool(diagram_generator(
+        "flowchart",
+        ProcessDesc,
+        "Order Fulfillment Process",
+        "fulfillment_flow.md"
+    ), FlowChart),
+    
+    % Step 7: Create a Gantt chart for Q1 initiatives
+    log("Creating Q1 roadmap"),
+    GanttDesc = "Q1 2025 Initiatives: January - Inventory System Upgrade. February - New Payment Gateway Integration. March - Mobile App Launch. Throughout Q1 - Customer Analytics Dashboard Development",
+    tool(diagram_generator(
+        "gantt",
+        GanttDesc,
+        "Q1 2025 Technology Roadmap",
+        "q1_roadmap.md"
+    ), Roadmap),
+    
+    end_thinking,
+    
+    % Present the complete dashboard
+    answer("# E-commerce Analytics Dashboard"),
+    answer("## Executive Summary"),
+    answer(Insights),
+    answer("## Sales Performance Analysis"),
+    answer(SalesAnalysis),
+    answer("### Monthly Sales Trends"),
+    answer(SalesChart),
+    answer("### Product Distribution"),
+    answer(DistributionChart),
+    answer("## System Architecture"),
+    answer(SchemaAnalysis),
+    answer("### Database Schema"),
+    answer(ErDiagram),
+    answer("## Operational Processes"),
+    answer("### Order Fulfillment Flow"),
+    answer(FlowChart),
+    answer("## Strategic Planning"),
+    answer("### Q1 2025 Roadmap"),
+    answer(Roadmap),
+    answer("---"),
+    answer("All diagrams have been saved to your workspace for future reference.").
+
+% Alternative branch: If data files don't exist, create sample data first
+agent_main :-
+    log("Data files not found, creating sample data"),
+    
+    % Create sample CSV data
+    CSVData = "Month,Product,Sales,Revenue\nJanuary,Widget A,150,4500\nJanuary,Widget B,200,6000\nFebruary,Widget A,180,5400",
+    open("sample_sales_data.csv", write, Stream),
+    format(Stream, "~w", [CSVData]),
+    close(Stream),
+    
+    log("Sample data created, please run again"),
+    
+    end_thinking,
+    answer("I've created sample data files. Please run this DML file again to generate the analytics dashboard.").

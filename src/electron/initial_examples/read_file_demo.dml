@@ -1,0 +1,28 @@
+% Demo of read_file_to_string/3 predicate
+% This demonstrates reading file contents directly into a string variable
+
+agent_main :-
+    % Let user select a file
+    param("file_to_read:file", "Select a file to read and analyze", FilePath),
+    
+    % Read the file contents into a string
+    read_file_to_string(FilePath, Content, []),
+    
+    % Get file size
+    string_length(Content, Size),
+    
+    % Log the info
+    log("File read successfully: ~w", [FilePath]),
+    log("File size: ~w characters", [Size]),
+    
+    % Analyze the content with AI
+    format(string(Prompt), 
+           "Please analyze this file and provide a brief summary:\n\nFile: ~w\n\nContent:\n~w",
+           [FilePath, Content]),
+    chat(Prompt, Analysis),
+    
+    % Display result
+    format(string(Result),
+           "File Analysis\n=============\n\nFile: ~w\nSize: ~w characters\n\nAnalysis:\n~w",
+           [FilePath, Size, Analysis]),
+    answer(Result).

@@ -1,0 +1,86 @@
+% @-Predicate specifications
+
+create_search_expression(Condition, "", Condition) :- !.
+create_search_expression(Condition, Phase, SearchExpression) :-
+    Phase \= "",
+    format(string(SearchExpression), "~w AND ~w", [Condition, Phase]).
+
+url_encode(DecodedString, EncodedString) :-
+    @("Replace all spaces in `DecodedString` with '%20' to create `EncodedString`. Assume other special characters are handled by the API or are not present in typical search terms.").
+
+generate_descriptive_filename(Condition, Phase, FileName) :-
+    @("Generate a descriptive filename based on the Condition and Phase.
+    1. Convert `Condition` and `Phase` to lowercase.
+    2. Replace spaces in both with underscores.
+    3. If `Phase` is an empty string, the format should be 'condition_trials.json'.
+    4. If `Phase` is provided, the format should be 'condition_phase_X_trials.json' (e.g., 'phase_3' from 'Phase 3').
+    Example: if Condition='Psoriasis' and Phase='Phase 3', FileName should be 'psoriasis_phase_3_trials.json'.").
+
+write_to_file(FilePath, Content) :-
+    open(FilePath, write, Stream),
+    format(Stream, "~w", [Content]),
+    close(Stream).
+
+% Main agent logic
+
+% Branch 1: Successful execution path
+agent_main :-
+    % Step 1: Define and retrieve parameters.
+    param("condition", "The condition to search for (e.g., 'Psoriasis').", Condition),
+    param("phase", "The clinical trial phase (e.g., 'Phase 3'). Default is empty.", Phase),
+    ( Condition \= "" -> true ; fail ), % Fail this branch if condition is missing.
+
+    log("Starting clinical trial query for Condition: '{Condition}', Phase: '{Phase}'."),
+
+    % Step 2: Create the search expression.
+    create_search_expression(Condition, Phase, SearchExpression),
+    log("Created search expression: '{SearchExpression}'."),
+
+    % Step 3: URL-encode the search expression.
+    url_encode(SearchExpression, EncodedExpression),
+
+    % Step 4: Construct the full API URL.
+    BaseURL = "https://clinicaltrials.gov/api/v2/studies",
+    Fields = "NCTId,Condition,BriefTitle,StudyType,Phase,PrimaryCompletionDate",
+    format(string(ApiURL), "~w?format=json&pageSize=100&query.term=~w&fields=~w", [BaseURL, EncodedExpression, Fields]),
+    log("Constructed API URL: {ApiURL}"),
+
+    % Step 5 & 6: Make the API call using the visit_webpage tool.
+    log("Querying ClinicalTrials.gov API..."),
+    tool(visit_webpage(ApiURL,truncate=0), ApiResponse),
+    ( ApiResponse \= "" -> true ; fail ), % Fail this branch if the response is empty.
+
+    % Step 7 & 8: Log the response and generate a filename.
+    log("API call successful. Received a response."),
+    generate_descriptive_filename(Condition, Phase, FileName),
+
+    % Step 9: Save the raw JSON data to the file.
+    log("Saving data to file: {FileName}"),
+    write_to_file(FileName, ApiResponse),
+
+    % Step 10: Provide a success message.
+    end_thinking,
+    answer("Successfully queried clinicaltrials.gov and saved the results to `{FileName}` in your workspace.").
+
+% Branch 2: Error handling for missing 'condition' parameter.
+agent_main :-
+    param("condition", "The condition to search for.", Condition),
+    Condition == "",
+    log(error="The 'condition' parameter is required but was not provided."),
+    end_thinking,
+    answer("Error: The 'condition' parameter is mandatory. Please provide a condition (e.g., 'Psoriasis') to search for clinical trials.").
+
+% Branch 3: Error handling for failed API calls or empty responses.
+agent_main :-
+    % This branch is tried if the first branch fails after the tool call.
+    param("condition", _, Condition),
+    Condition \= "",
+    log(error="The API call to clinicaltrials.gov failed or returned an empty response."),
+    end_thinking,
+    answer("I'm sorry, but the request to clinicaltrials.gov failed. The service may be temporarily unavailable, or the search query might be invalid. Please check your search terms and try again later.").
+
+% Branch 4: Final fallback for any other unexpected errors.
+agent_main :-
+    log(error="An unexpected error occurred during the process."),
+    end_thinking,
+    answer("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time.").

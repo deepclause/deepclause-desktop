@@ -1,0 +1,99 @@
+% @-Predicate specifications
+
+% Step 1: Broadly understand the topic
+understand_topic_from_initial_search(InitialSearchResults, Topic, TopicOverview) :-
+    @("Analyze the provided `InitialSearchResults` for the given `Topic`. Synthesize a brief, high-level `TopicOverview` (2-3 sentences) that captures the main concepts, key terms, and general context. This overview will be used to guide further, more specific research.").
+
+% Step 2: Craft targeted search queries
+craft_search_queries(Topic, TopicOverview, SearchQueriesList) :-
+    @("Based on the `Topic` and the `TopicOverview`, generate a list of 3 to 5 specific and targeted search queries. These queries should aim to explore different sub-themes, find supporting data, and uncover expert opinions. The output `SearchQueriesList` must be a Prolog list of strings.").
+
+% Step 3 & 4: Process content, check sufficiency, and generate structure
+process_and_structure_content(AllSearchResults, Topic, ReportStructure, SourcesList) :-
+    @("Analyze `AllSearchResults` related to the `Topic`. First, determine if the information is sufficient for a detailed report. If not, this predicate should fail. If sufficient, extract key information (facts, arguments, data) and associate each piece of information with its source URL. Then, generate a logical `ReportStructure` (an outline) for a comprehensive report. Finally, compile a `SourcesList` of all unique source URLs. The output should be: ReportStructure as a list of section titles (e.g., ['Introduction', 'Key Findings', 'Conclusion']), and SourcesList as a numbered list of terms, e.g., [source(1, 'http://...'), source(2, 'http://...')].").
+
+% Step 5: Write the full report
+write_report_from_structure(ReportStructure, AllSearchResults, SourcesList, Topic, FinalReport) :-
+    @("Using the `ReportStructure` as a guide, write a full, detailed research report on the `Topic`. For each section in the structure, synthesize information from `AllSearchResults`. Crucially, wherever information is used, insert a citation marker `[N]` that corresponds to the correct source in the `SourcesList`. The report must conclude with a 'Sources' section that lists all the sources from the `SourcesList` in a numbered format. The output `FinalReport` should be a single, well-formatted markdown string.").
+
+% Step 6: Summarize the final report
+summarize_final_report(FinalReport, Topic, Summary) :-
+    @("Read the `FinalReport` and create a concise `Summary` (3-4 sentences). The summary should state the main conclusions of the report regarding the `Topic`. This summary will be presented to the user.").
+
+% Helper predicate to write content to a file
+write_to_file(FilePath, Content) :-
+    open(FilePath, write, Stream),
+    format(Stream, Content, []),
+    close(Stream).
+
+% Main agent logic
+
+% Branch 1: Comprehensive success path
+agent_main :-
+    param("topic", "The research topic or question.", Topic),
+    ( Topic \= "" -> true ; (log(error="Topic parameter is missing."), fail) ),
+    log("Starting deep research process for topic: '{Topic}'."),
+
+    % Step 1: Initial web search for broad understanding
+    log("Performing initial web search to understand the topic."),
+    tool(web_search(Topic, num=5), InitialResults),
+    understand_topic_from_initial_search(InitialResults, Topic, TopicOverview),
+
+    % Step 2: Craft and execute specific searches
+    log("Crafting targeted search queries based on initial findings."),
+    craft_search_queries(Topic, TopicOverview, SearchQueries),
+    log("Executing targeted searches: ~w", [SearchQueries]),
+    findall(Result, (member(Query, SearchQueries), tool(web_search(Query, num=10), Result)), AllResultsLists),
+    atomic_list_concat([InitialResults | AllResultsLists], " ", AllResults),
+
+    % Step 3 & 4: Process content, check sufficiency, and create report structure
+    log("Processing all gathered information to structure the report."),
+    process_and_structure_content(AllResults, Topic, ReportStructure, SourcesList),
+    ( ReportStructure \= [] -> log("Content is sufficient. Generated report outline.") ; (log(error="Gathered content was not sufficient for a deep report."), fail) ),
+
+    % Step 5: Write the full report with citations
+    log("Writing the full report, section by section, with citations."),
+    write_report_from_structure(ReportStructure, AllResults, SourcesList, Topic, FinalReport),
+    write_to_file("research_report.md", FinalReport),
+    log("Successfully generated and saved the report to 'research_report.md'."),
+
+    % Step 6: Summarize and present to the user
+    log("Creating a final summary for the user."),
+    summarize_final_report(FinalReport, Topic, Summary),
+
+    end_thinking,
+    system("You are a research assistant presenting your findings."),
+    observation("The user provided the following topic: {Topic}"),
+    observation("I ran an extensive search and generated a report in the file 'research_report.md'"),
+    observation("This is the summary of the report: {Summary}"),
+    chat("Please provide a brief summary of the findings.").
+
+% Branch 2: Fallback if content is insufficient for a deep report
+agent_main :-
+    param("topic", "The research topic or question.", Topic),
+    log("The initial research did not yield enough information to create a full, structured report."),
+    log("Attempting to provide a high-level summary based on the available data."),
+
+    % Perform a broader search to gather at least some context
+    tool(web_search(Topic, num=15), SearchResults),
+    process_and_structure_content(SearchResults, Topic, _, SourcesList), % We only need the sources
+    summarize_final_report(SearchResults, Topic, HighLevelSummary), % Repurpose the summarizer for search results
+
+    end_thinking,
+    system("You are a research assistant explaining the limitations of your findings."),
+    observation(HighLevelSummary),
+    chat("I was unable to gather enough detailed information to construct a full research report on your topic. However, based on the search results, I can provide a high-level overview. Please consider refining your topic for a more in-depth analysis. Here is the summary:").
+
+% Branch 3: Fallback if no information is found at all
+agent_main :-
+    param("topic", "The research topic or question.", Topic),
+    log(error="Failed to find any relevant information for the topic: '{Topic}'."),
+    end_thinking,
+    system("You are a helpful assistant explaining a complete failure to find information."),
+    chat("I apologize, but I was unable to find any relevant information for your topic: '{Topic}'. The topic may be too niche, or there might have been an issue with the search tool. Please try rephrasing your query or try again later.").
+
+% Branch 4: Final fallback for unexpected errors
+agent_main :-
+    log(error="A critical and unexpected error occurred during the research process."),
+    end_thinking,
+    chat("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  body {
+    @apply m-0 p-0 font-sans bg-bg-darkest text-text-primary leading-normal;
+  }
+
+  #root {
+    @apply h-screen overflow-hidden;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    @apply w-2.5 h-2.5;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-medium;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded border-2 border-bg-medium;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-secondary;
+  }
+}
+
+@layer utilities {
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .writing-mode-vertical {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+  }
+
+  /* Smooth streaming - prevent layout shifts */
+  .streaming-container {
+    contain: layout style paint;
+  }
+
+  /* GPU acceleration for smooth updates */
+  .will-change-contents {
+    will-change: contents;
+    transform: translateZ(0);
+  }
+}
+
+/* Mermaid diagram styling */
+.mermaid-diagram {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+  font-family: ui-sans-serif, system-ui, sans-serif !important;
+}
+
+/* Override Mermaid default styles to match our light theme */
+.mermaid-diagram .node rect,
+.mermaid-diagram .node circle,
+.mermaid-diagram .node ellipse,
+.mermaid-diagram .node polygon {
+  fill: #F5F5F5;
+  stroke: #1A1A1A;
+  stroke-width: 2px;
+}
+
+.mermaid-diagram .node .label {
+  color: #1A1A1A;
+  fill: #1A1A1A;
+}
+
+.mermaid-diagram .edgeLabel {
+  background-color: #FFFFFF;
+  color: #666666;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.mermaid-diagram .cluster rect {
+  fill: #FAFAFA;
+  stroke: #DDDDDD;
+  stroke-width: 1px;
+}
+
+.mermaid-diagram .cluster .label {
+  color: #1A1A1A;
+  fill: #1A1A1A;
+  font-weight: 600;
+}
+
+.mermaid-diagram .edgePath .path {
+  stroke: #666666;
+  stroke-width: 2px;
+}
+
+.mermaid-diagram .marker {
+  fill: #666666;
+  stroke: #666666;
+}
+
+/* Ensure text is readable */
+.mermaid-diagram text {
+  fill: #1A1A1A !important;
+  color: #1A1A1A !important;
+}
+
+.mermaid-diagram .messageText {
+  fill: #1A1A1A !important;
+  stroke: none !important;
+}
+

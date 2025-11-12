@@ -1,0 +1,62 @@
+% --- Main Agent Logic ---
+
+% Branch 1: Solve the linear programming problem using Constraint Logic Programming over Reals (CLP(R)).
+% This is the most direct and efficient way to solve the problem as stated.
+agent_main :-
+    log("Setting up the linear programming problem using Constraint Logic Programming over Reals (CLP(R))."),
+
+    % Define the constraints for the linear programming problem.
+    % The {} block is specific to CLP(R) and holds all the equations and inequalities.
+    {
+        % Non-negativity constraints for all decision variables
+        F0 >= 0, A2003 >= 0, B2003 >= 0, D2003 >= 0,
+        C2004 >= 0, D2004 >= 0, D2005 >= 0, D2006 >= 0,
+
+        % Cash Flow Constraints
+        F0 - 100 - A2003 - B2003 - D2003 = 0,
+        D2003 * 1.04 - 150 - C2004 - D2004 = 0,
+        D2004 * 1.04 + B2003 * 1.25 - 120 - D2005 = 0,
+        D2005 * 1.04 + A2003 * 1.40 + C2004 * 1.30 - 110 - D2006 = 0,
+
+        % Investment Limit Constraints
+        A2003 =< 60,
+        B2003 =< 90,
+        C2004 =< 50
+    },
+
+    log("Constraints have been applied. Now, minimizing the objective function F0."),
+
+    % Use the minimize/1 predicate from the CLP(R) library to find the optimal solution.
+    minimize(F0),
+
+    log("Optimal solution found. Preparing the final report."),
+    end_thinking,
+
+    % Present the final results to the user in a clear, formatted way.
+    answer("## Linear Programming Solution"),
+    format(string(Result), "The optimization is complete. The minimum initial fund (F0) required at the end of 2002 is **~2f**.", [F0]),
+    answer(Result),
+    answer("### Optimal Values for Decision Variables:"),
+    format(string(Table), "| Variable | Optimal Value |\n|---|---|\n| F0 (Initial Fund) | ~2f |\n| A2003 (Bond A) | ~2f |\n| B2003 (Bond B) | ~2f |\n| D2003 (Bank Deposit) | ~2f |\n| C2004 (Bond C) | ~2f |\n| D2004 (Bank Deposit) | ~2f |\n| D2005 (Bank Deposit) | ~2f |\n| D2006 (Bank Deposit) | ~2f |", [F0, A2003, B2003, D2003, C2004, D2004, D2005, D2006]),
+    answer(Table).
+
+% Branch 2: Fallback if the CLP(R) solver fails or is not available.
+% This branch will search for online tools that can solve the problem.
+agent_main :-
+    log(error="The internal CLP(R) solver failed to find a solution. This could be due to an issue with the constraints or the solver itself."),
+    log("Searching for alternative online linear programming solvers."),
+
+    % Perform a web search to find online tools.
+    tool(web_search("online linear programming solver tool"), SearchResults),
+
+    end_thinking,
+    system("You are a helpful assistant. The primary method for solving a user's linear programming problem failed. You need to provide a helpful alternative by suggesting online tools."),
+    observation("I was unable to solve the linear programming problem directly. However, I have found some online tools that you can use to input the equations and find the solution."),
+    observation(SearchResults),
+    chat("Please present the search results as a list of alternative tools for the user.").
+
+% Branch 3: Final fallback for any unexpected errors.
+agent_main :-
+    log(error="A critical and unexpected error occurred during the process."),
+    end_thinking,
+    answer("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

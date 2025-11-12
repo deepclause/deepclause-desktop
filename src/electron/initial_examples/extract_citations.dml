@@ -1,0 +1,98 @@
+% @-Predicate specifications
+
+generate_filename_from_url(URL, PDFFileName, BibFileName) :-
+    @("From the input `URL`, generate two clean, valid filenames. One for the downloaded paper (`PDFFileName`) which should end in '.pdf', and one for the BibTeX output (`BibFileName`) which should end in '.bib'. Base the names on the last part of the URL path, removing invalid characters. For example, 'http://example.com/papers/ai_is_cool.pdf' could result in PDFFileName='ai_is_cool.pdf' and BibFileName='ai_is_cool.bib'.").
+
+extract_citations_from_text(PaperContent, CitationsList) :-
+    @("Analyze the raw text content of a research paper provided in `PaperContent`. Identify all references or citations listed, typically at the end of the paper. Extract each citation's details (authors, title, year, journal/conference, etc.) and structure them as a Prolog list of terms. For example: [citation(authors(['Author A', 'Author B']), title('Paper Title'), year(2023)), ...]. If no citations can be found, this predicate should fail.").
+
+format_citations_as_bibtex(CitationsList, BibtexString) :-
+    @("Convert a `CitationsList` of structured Prolog terms into a single, correctly formatted BibTeX string (`BibtexString`). Each entry should be a valid @article, @inproceedings, or @book entry. Generate a unique key for each entry (e.g., author_year_title). For example, a single entry might look like: '@article{Author2023PaperTitle, author = {Author A and Author B}, title = {Paper Title}, year = {2023}}'. Combine all entries into one string separated by newlines.").
+
+extract_paper_title_from_url(URL, SearchResults, PaperTitle) :-
+    @("Analyze the `SearchResults` obtained by searching for the `URL`. Identify the most likely title of the research paper associated with that URL. Output the title as a string to `PaperTitle`. If a title cannot be determined, this predicate should fail.").
+
+find_bibtex_on_scholar(ScholarResults, BibtexString) :-
+    @("Analyze the provided Google Scholar `ScholarResults`. Find the entry that most closely matches the target paper and extract its pre-formatted BibTeX citation. Google Scholar often provides a 'Cite' link which reveals this. Output the complete, single BibTeX entry as a string to `BibtexString`. If no BibTeX entry can be found, this predicate should fail.").
+
+write_to_file(FilePath, Content) :-
+    open(FilePath, write, Stream),
+    format(Stream, Content, []),
+    close(Stream).
+
+% Main agent logic
+
+% Branch 1: Successful download, read, and extraction
+agent_main :-
+    param("url", "The URL of the paper to process.", URL),
+    ( URL \= "" -> true ; (log(error="URL parameter is missing."), fail) ),
+    log("Starting citation extraction process for URL: {URL}."),
+
+    % Step 1: Generate filenames and download the paper
+    generate_filename_from_url(URL, PDFFileName, BibFileName),
+    log("Downloading paper as {PDFFileName}."),
+    tool(file_downloader(URL, PDFFileName), DownloadedFile),
+    ( exists_file(DownloadedFile) -> log("Successfully downloaded file.") ; (log(error="File download failed."), fail) ),
+
+    % Step 2: Read the paper's content
+    log("Reading content from {DownloadedFile}."),
+    tool(workspace_reader(DownloadedFile), PaperContent),
+    ( PaperContent \= "" -> true ; (log(error="Could not read content from the downloaded file. It might be empty, corrupted, or in an unsupported format."), fail) ),
+
+    % Step 3: Extract citations from the text
+    log("Extracting citations from the paper's text."),
+    extract_citations_from_text(PaperContent, CitationsList),
+    ( CitationsList \= [] -> log("Successfully extracted citation data.") ; (log(error="Failed to extract citations directly from the text."), fail) ),
+
+    % Step 4: Format citations as BibTeX and save to file
+    log("Formatting citations into BibTeX format."),
+    format_citations_as_bibtex(CitationsList, BibtexString),
+    log("Saving BibTeX data to {BibFileName}."),
+    write_to_file(BibFileName, BibtexString),
+
+    log("Process complete. BibTeX file created successfully."),
+    end_thinking,
+    system("You are a helpful research assistant. Your task is to inform the user about the successful completion of a task."),
+    observation("I have successfully downloaded the paper in the file {DownloadedFile}, extracted the citations, and saved them in the file `{BibFileName}` in the user workspace."),
+    chat("Inform the user about the successful task completion.").
+
+% Branch 2: Fallback if direct text extraction fails, using Google Scholar
+agent_main :-
+    param("url", "The URL of the paper to process.", URL),
+    log("Direct citation extraction failed. Attempting fallback using web search."),
+
+    % Step 1: Search for the URL to find the paper's title
+    log("Searching online to identify the paper's title from its URL."),
+    tool(web_search(URL), WebSearchResults),
+    extract_paper_title_from_url(URL, WebSearchResults, PaperTitle),
+    ( PaperTitle \= "" -> log("Identified paper title: {PaperTitle}.") ; (log(error="Could not identify the paper's title from the URL."), fail) ),
+
+    % Step 2: Search Google Scholar for the paper and get BibTeX
+    log("Searching Google Scholar for a BibTeX entry."),
+    tool(google_scholar_search(PaperTitle, num=1), ScholarResults),
+    find_bibtex_on_scholar(ScholarResults, BibtexString),
+    ( BibtexString \= "" -> log("Found a BibTeX entry on Google Scholar.") ; (log(error="Could not find a BibTeX entry on Google Scholar."), fail) ),
+
+    % Step 3: Save the BibTeX entry to a file
+    generate_filename_from_url(URL, _, BibFileName),
+    log("Saving BibTeX data to {BibFileName}."),
+    write_to_file(BibFileName, BibtexString),
+
+    log("Process complete. BibTeX file created from online data."),
+    end_thinking,
+    system("You are a helpful research assistant. You need to inform the user that the primary method failed but a fallback succeeded."),
+    chat("I was unable to extract citations directly from the paper's text. However, I successfully found a BibTeX entry for the paper online and have saved it to the file `{BibFileName}` in your workspace. Please verify its contents.").
+
+% Branch 3: Fallback if the file download fails
+agent_main :-
+    param("url", "The URL of the paper to process.", URL),
+    log(error="Failed to download the paper from the provided URL: {URL}."),
+    end_thinking,
+    system("You are a helpful assistant explaining a failure to the user."),
+    chat("I'm sorry, but I was unable to download the paper from the URL you provided. Please check if the URL is correct and publicly accessible. The website might be down or require a login.").
+
+% Branch 4: Final fallback for unexpected errors
+agent_main :-
+    log(error="A critical and unexpected error occurred during the process."),
+    end_thinking,
+    chat("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

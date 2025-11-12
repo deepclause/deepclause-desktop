@@ -1,0 +1,60 @@
+% @-Predicate specifications
+
+is_valid_svg(SVGContent) :-
+    @("Check if the provided SVGContent string is a plausible SVG. The predicate should succeed if the string starts with '<svg' (case-insensitive, ignoring leading whitespace) and ends with '</svg>' (case-insensitive, ignoring trailing whitespace). Otherwise, it should fail.").
+
+write_to_file(FilePath, Content) :-
+    open(FilePath, write, Stream),
+    format(Stream, "~w", [Content]),
+    close(Stream).
+
+% Main agent logic
+
+% Branch 1: Attempt to generate the SVG directly
+agent_main :-
+    log("Attempting to generate an SVG of a pelican riding a bicycle."),
+    
+    % Step 1: Create a detailed prompt for the generator.
+    Prompt = "Generate a complete and valid SVG file of a pelican riding a bicycle. The SVG code must be well-formed XML, starting with an <svg> tag that includes width, height, and xmlns attributes, and ending with a closing </svg> tag. The image should be a clear, recognizable depiction of a pelican on a bicycle. Do not include the output in triple backticks.",
+    
+    % Step 2: Use the generate tool to create the SVG content.
+    generate(Prompt, SVGContent),
+    
+    % Step 3: Verify if the generated content is a valid SVG.
+    ( is_valid_svg(SVGContent) ->
+        log("Successfully generated plausible SVG content.")
+    ;
+        log(error="Generated content does not appear to be a valid SVG."),
+        fail
+    ),
+    
+    % Step 4: Save the SVG content to a file.
+    FileName = "pelican_on_a_bicycle.svg",
+    log("Saving the SVG to file: ~w", [FileName]),
+    write_to_file(FileName, SVGContent),
+    
+    end_thinking,
+    
+    % Step 5: Present the result to the user.
+    answer("I have generated an SVG of a pelican riding a bicycle and saved it as `{FileName}` in your workspace."),
+    answer("Here is the rendered image:"),
+    answer(SVGContent).
+
+% Branch 2: Fallback if SVG generation fails or is invalid
+agent_main :-
+    log("Direct SVG generation failed or produced an invalid result."),
+    log("This is a known difficult benchmark for AI models."),
+    
+    end_thinking,
+    
+    system("You are a helpful assistant explaining why a task failed."),
+    observation("The user asked to create an SVG of a pelican riding a bicycle."),
+    observation("The generation tool failed to produce a valid SVG file."),
+    observation("This specific request is a well-known benchmark used to test the capabilities of large language models, and many models struggle to complete it successfully."),
+    answer("I was unable to generate a valid SVG for a pelican riding a bicycle. This is a surprisingly difficult task that is often used as a benchmark to test AI capabilities. The model may have produced invalid code or a non-image response. Please try again if you'd like, but the result may be inconsistent.").
+
+% Branch 3: Final fallback for any unexpected errors
+agent_main :-
+    log(error="An unexpected error occurred during the process."),
+    end_thinking,
+    answer("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

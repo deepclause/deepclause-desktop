@@ -1,0 +1,43 @@
+% Example: Creating diagrams from descriptions and data files
+
+% Simple flowchart from natural language
+agent_main :-
+    Description = "User logs in, system validates credentials, if valid show dashboard else show error",
+    tool(diagram_generator(
+        "flowchart",
+        Description,
+        "User Login Flow",
+        "login_flow.md"
+    ), DiagramMd),
+    
+    end_thinking,
+    answer("I've created a login flow diagram:"),
+    answer(DiagramMd).
+
+% Sequence diagram
+agent_main :-
+    Description = "Client sends HTTP request to API Gateway. Gateway authenticates with Auth Service. Auth Service returns token. Gateway forwards request to Backend. Backend queries Database. Database returns data. Backend processes and returns response to Gateway. Gateway sends response to Client.",
+    tool(diagram_generator(
+        "sequence",
+        Description,
+        "API Request Flow",
+        "api_sequence.md"
+    ), DiagramMd),
+    
+    end_thinking,
+    answer("I've created an API sequence diagram:"),
+    answer(DiagramMd).
+
+% Pie chart from inline Mermaid syntax
+agent_main :-
+    MermaidCode = "pie title Project Time Distribution\n    \"Development\" : 45\n    \"Testing\" : 20\n    \"Documentation\" : 15\n    \"Meetings\" : 20",
+    tool(diagram_generator(
+        "pie",
+        MermaidCode,
+        "Project Time Distribution",
+        "time_distribution.md"
+    ), DiagramMd),
+    
+    end_thinking,
+    answer("I've created a time distribution pie chart:"),
+    answer(DiagramMd).

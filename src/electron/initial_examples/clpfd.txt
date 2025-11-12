@@ -1,0 +1,1 @@
+Create some examples showing typical problems that can be solved with constraint linear programming on finite domains.

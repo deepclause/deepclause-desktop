@@ -1,0 +1,141 @@
+% @-Predicate specifications
+
+format_history_for_prompt([], "No steps taken yet.") :- !.
+format_history_for_prompt(HistoryList, FormattedHistoryString) :-
+    format_steps(HistoryList, StepStrings),
+    atomic_list_concat(StepStrings, '', FormattedHistoryString).
+
+format_steps([], []).
+format_steps([step(Iteration, Thought, Action, Observation)|Rest], [FormattedStep|RestFormatted]) :-
+    format_step(Iteration, Thought, Action, Observation, FormattedStep),
+    format_steps(Rest, RestFormatted).
+
+format_step(Iteration, Thought, Action, Observation, FormattedStep) :-
+    format(atom(FormattedStep),
+           'Step ~w:\nThought: ~w\nAction: ~w\nObservation: ~w\n\n',
+           [Iteration, Thought, Action, Observation]).
+
+think_with_browser(Task, FormattedHistory, Thought, Action) :-
+    @("You are a large language model acting as the reasoning engine for a ReAct-style agent.
+    Your goal is to solve the user's task by breaking it down into a sequence of thoughts and actions using ONLY web browsing tools.
+
+    **User's Task:**
+    {Task}
+
+    **Available Browser Tools:**
+    - browser_navigate(url)
+    - browser_snapshot()
+    - browser_click(element, ref)
+    - browser_type(element, ref, text, submit)
+    - browser_fill_form(fields)
+    - browser_select_option(element, ref, values)
+    - browser_wait_for(text)
+    - browser_navigate_back()
+
+    **Your Process:**
+    For each step, you must first think about your plan. Then, you must choose exactly ONE action to take.
+    The action can be either calling one of the available browser tools or finishing the task.
+    A common workflow is: navigate -> snapshot -> identify element refs -> interact (click/type) -> snapshot -> extract info.
+
+    **History of Previous Steps:**
+    {FormattedHistory}
+
+    **Your Turn:**
+    Based on the task and the history, decide on your next thought and action.
+
+    **Output Format:**
+    You must output a valid Prolog term in the format: `result(Thought, ActionTerm)`.
+    - `Thought` must be a string describing your reasoning (e.g., \"I need to go to the website, so I will use browser_navigate.\").
+    - `ActionTerm` must be one of the following Prolog terms:
+      - `tool_call(browser_navigate('URL'))`
+      - `tool_call(browser_snapshot)`
+      - `tool_call(browser_click('element description', 'ref_from_snapshot'))`
+      - `tool_call(browser_type('element description', 'ref_from_snapshot', 'text to type', true_or_false_for_submit))`
+      - `finish(\"your final answer to the user\")`
+
+    Provide only the `result(Thought, ActionTerm)` term as your response.").
+
+% Helper predicate to execute the chosen action
+execute_action(tool_call(Tool), Observation) :-
+    tool(Tool, Observation).
+execute_action(_, "Error: Unknown tool or action format.").
+
+% Helper to write the action to the DML log file
+write_action_to_log(Stream, Action) :-
+    format(Stream, '~q.~n', [Action]),
+    flush_output(Stream).
+
+% The main ReAct loop
+% react_loop(Task, History, Iter, Max, LogStream)
+
+% Base case: Stop if max iterations are reached
+react_loop(_, _, Iter, Max, LogStream) :-
+    Iter > Max,
+    log(error="Max iterations reached. The agent could not complete the task."),
+    close(LogStream),
+    fail.
+
+% Recursive step: Think, Act, Observe, and loop
+react_loop(Task, History, Iter, Max, LogStream) :-
+    % 1. THINK: Generate the next thought and action
+    format_history_for_prompt(History, FormattedHistory),
+    think_with_browser(Task, FormattedHistory, Thought, Action),
+    log(Thought),
+    log("Action: {Action}"),
+
+    % 2. RECORD & ACT: Write the action to the log, then check if it's finish or a tool call
+    write_action_to_log(LogStream, Action),
+    ( Action = finish(FinalAnswer) ->
+        log("Task finished. Presenting final answer."),
+        close(LogStream),
+        end_thinking,
+        system("You are a helpful AI agent that has just completed a task using a ReAct loop with browser tools."),
+        user(Task),
+        observation("This is the answer I found: {FinalAnswer}"),
+        chat("Please present the final answer in a clear and concise manner.")
+    ;
+        Action = tool_call(Tool),
+        log("Executing ~w", [Tool]),
+        execute_action(Action, Observation),
+        log("Observation: ~w", [Observation]),
+
+        % 3. OBSERVE & RECURSE: Add the new step to history and continue
+        NewHistoryItem = step(Iter, Thought, Action, Observation),
+        append(History, [NewHistoryItem], NewHistory),
+        NextIter is Iter + 1,
+        react_loop(Task, NewHistory, NextIter, Max, LogStream)
+    ).
+
+% Main agent logic
+
+% Branch 1: The primary ReAct agent loop
+agent_main :-
+    param("task", "The task for the browser-based ReAct agent to solve.", Task),
+    ( Task \= "" -> true ; (log(error="The 'task' parameter is missing."), fail) ),
+    log("Starting Browser ReAct agent for task: '{Task}'."),
+
+    % Setup for logging actions
+    LogFileName = "browser_react_log.dml",
+    log("Recording all actions to '{LogFileName}'."),
+    open(LogFileName, write, LogStream),
+    format(LogStream, '% ReAct Agent Action Log for task: ~w~n~n', [Task]),
+
+    % Start the loop
+    MaxIterations = 15,
+    InitialHistory = [],
+    InitialIteration = 1,
+    react_loop(Task, InitialHistory, InitialIteration, MaxIterations, LogStream).
+
+% Branch 2: Fallback if the loop fails (e.g., max iterations reached)
+agent_main :-
+    param("task", "The task for the ReAct agent to solve.", Task),
+    log(error="The ReAct agent failed to complete the task '{Task}' within the allowed number of steps."),
+    end_thinking,
+    system("You are a helpful assistant explaining a failure."),
+    chat("I apologize, but I was unable to complete the task. I may have gotten stuck in a loop or the problem was too complex for the number of steps I'm allowed to take. A log of my attempted actions has been saved to `browser_react_log.dml` in your workspace.").
+
+% Branch 3: Final fallback for unexpected errors
+agent_main :-
+    log(error="A critical and unexpected error occurred during the agent's operation."),
+    end_thinking,
+    chat("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

@@ -1,0 +1,65 @@
+% A sudo example sudoku solver using clpfd
+
+sudoku(Rows) :-
+        length(Rows, 9), maplist(same_length(Rows), Rows),
+        append(Rows, Vs), Vs ins 1..9,
+        maplist(all_distinct, Rows),
+        transpose(Rows, Columns), maplist(all_distinct, Columns),
+        Rows = [As,Bs,Cs,Ds,Es,Fs,Gs,Hs,Is],
+        blocks(As, Bs, Cs), blocks(Ds, Es, Fs), blocks(Gs, Hs, Is).
+
+blocks([], [], []).
+blocks([N1,N2,N3|Ns1], [N4,N5,N6|Ns2], [N7,N8,N9|Ns3]) :-
+        all_distinct([N1,N2,N3,N4,N5,N6,N7,N8,N9]),
+        blocks(Ns1, Ns2, Ns3).
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+   Sample problems.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+problem(1, P) :-
+        P = [[1,_,_,8,_,4,_,_,_],
+             [_,2,_,_,_,_,4,5,6],
+             [_,_,3,2,_,5,_,_,_],
+             [_,_,_,4,_,_,8,_,5],
+             [7,8,9,_,5,_,_,_,_],
+             [_,_,_,_,_,6,2,_,3],
+             [8,_,1,_,_,_,7,_,_],
+             [_,_,_,1,2,3,_,8,_],
+             [2,_,5,_,_,_,_,_,9]].
+
+% classic cryptanalysis example
+puzzle([S,E,N,D] + [M,O,R,E] = [M,O,N,E,Y]) :-
+        Vars = [S,E,N,D,M,O,R,Y],
+        Vars ins 0..9,
+        all_different(Vars),
+                  S*1000 + E*100 + N*10 + D +
+                  M*1000 + O*100 + R*10 + E #=
+        M*10000 + O*1000 + N*100 + E*10 + Y,
+        M #\= 0, S #\= 0.
+
+%simple task scheduling
+% Tasks is a list of tasks, each of the form task(S_i, D_i, E_i, C_i, T_i).
+%  S_i denotes the start time, D_i the positive duration, E_i the end time,
+% C_i the non-negative resource consumption, and T_i the task identifier. 
+% Each of these arguments must be a finite domain variable with bounded domain, 
+% or an integer. 
+tasks(Tasks, Starts, End) :-
+        Tasks = [task(_,3,_,1,_),
+                 task(_,4,_,1,_),
+                 task(_,2,_,1,_),
+                 task(_,3,_,1,_)],
+        maplist(task_start, Tasks, Starts),
+        Starts ins 0..100,
+        cumulative(Tasks, [limit(2)]),
+        foldl(max_end, Tasks, 0, End).
+
+task_start(task(Start,_,_,_,_), Start).
+
+max_end(task(_,_,End,_,_), E0, E) :-
+        E #= max(E0, End).
+
+agent_main :-
+    problem(1, Rows), sudoku(Rows), maplist(labeling([ff]), Rows), yield(Rows),
+    puzzle(As+Bs=Cs), label(As), yield([As,Bs,Cs]),
+    tasks(Tasks, Starts, End), labeling([min(End)], Starts), yield(Starts).

@@ -1,0 +1,1 @@
+A tool that takes a URL of a paper, downloads the paper, reads it and extracts all citations in Bibtex format.

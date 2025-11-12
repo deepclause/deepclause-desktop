@@ -1,0 +1,77 @@
+<!doctype html>
+<title>Basic Emulator</title><!-- not BASIC! -->
+
+<script src="../build/libv86.js"></script>
+<script>
+"use strict";
+
+window.onload = function()
+{
+    var start = Date.now();
+
+    setInterval(function()
+    {
+        document.getElementById("time").textContent = Math.round((Date.now() - start) / 1000);
+    }, 999);
+
+    var emulator = new V86({
+        wasm_path: "../build/v86.wasm",
+        memory_size: 512 * 1024 * 1024,
+        vga_memory_size: 8 * 1024 * 1024,
+        screen_container: document.getElementById("screen_container"),
+        bios: {
+            url: "../bios/seabios.bin",
+        },
+        vga_bios: {
+            url: "../bios/vgabios.bin",
+        },
+        initial_state: {
+            url: "../images/arch_state-v2.bin.zst",
+        },
+        filesystem: {
+            baseurl: "../images/arch/",
+        },
+        autostart: true,
+    });
+
+    document.getElementById("status").textContent += ".";
+
+    emulator.add_listener("emulator-ready", async function()
+    {
+        document.getElementById("status").textContent += ".";
+
+        var code = "console.log(3 * 7);\n";
+        var buffer = new Uint8Array(code.length);
+
+        buffer.set(code.split("").map(function(chr) { return chr.charCodeAt(0); }));
+
+        await emulator.create_file("/root/code.js", buffer);
+        emulator.serial0_send("node /root/code.js > /root/out.txt 2> /root/out.txt\n");
+    });
+
+    var serial_out = "";
+    emulator.add_listener("serial0-output-byte", async function(byte)
+    {
+        var chr = String.fromCharCode(byte);
+        serial_out += chr;
+
+        if(serial_out.endsWith("root@nyu"))
+        {
+            const data = await emulator.read_file("/root/out.txt");
+            document.getElementById("output").textContent += String.fromCharCode.apply(this, data);
+        }
+    });
+}
+</script>
+
+<pre><span id=time></span> <span id=status></span></pre>
+
+<!-- A minimal structure for the ScreenAdapter defined in browser/screen.js -->
+<div id="screen_container">
+    <div style="white-space: pre; font: 14px monospace; line-height: 14px"></div>
+    <canvas style="display: none"></canvas>
+</div>
+
+<hr>
+
+<pre id=output></pre>

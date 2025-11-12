@@ -1,0 +1,13 @@
+Month,Product,Sales,Revenue,Region
+January,Widget A,150,4500,North
+January,Widget B,200,6000,North
+January,Widget C,100,2500,South
+February,Widget A,180,5400,North
+February,Widget B,220,6600,North
+February,Widget C,130,3250,South
+March,Widget A,200,6000,North
+March,Widget B,250,7500,North
+March,Widget C,150,3750,South
+April,Widget A,220,6600,East
+April,Widget B,280,8400,East
+April,Widget C,170,4250,West

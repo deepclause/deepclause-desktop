@@ -1,0 +1,106 @@
+% Example: Complex data analysis workflow with multiple visualizations
+
+% Full workflow: Download data, analyze, create multiple diagrams
+agent_main :-
+    % Step 1: Get sample sales data
+    FileName = "sample_sales_data.csv",
+
+    % Step 2: Analyze the data
+    log("Performing comprehensive data analysis"),
+    tool(data_analyzer(FileName, "full"), FullAnalysis),
+    
+    % Step 3: Create a summary for the user
+    generate("Based on this sales data analysis, provide a brief executive summary highlighting key insights", Summary),
+    
+    % Step 4: Create visualizations
+    log("Creating bar chart visualization"),
+    tool(diagram_generator(
+        "bar",
+        FileName,
+        "Sales Trends",
+        "sales_trends.md"
+    ), BarChart),
+    
+    log("Creating pie chart for category breakdown"),
+    tool(diagram_generator(
+        "pie",
+        FileName,
+        "Category Distribution",
+        "category_pie.md"
+    ), PieChart),
+    
+    % Step 5: Create a Gantt chart for planning
+    GanttDesc = "Q1: Data Collection and Cleanup. Q2: Analysis and Model Building. Q3: Testing and Validation. Q4: Deployment and Monitoring",
+    tool(diagram_generator(
+        "gantt",
+        GanttDesc,
+        "2025 Analytics Roadmap",
+        "roadmap.md"
+    ), Gantt),
+    
+    end_thinking,
+    answer("Complete Sales Analysis Report"),
+    answer("## Executive Summary"),
+    answer(Summary),
+    answer("## Data Overview"),
+    answer(FullAnalysis),
+    answer("## Visualizations"),
+    answer(BarChart),
+    answer(PieChart),
+    answer("## Future Planning"),
+    answer(Gantt).
+
+% Create a flowchart representing a data processing pipeline
+agent_main :-
+    log("Creating data pipeline diagram"),
+    
+    % Define the pipeline as structured data
+    PipelineDesc = "Raw Data -> Data Validation -> Filter Invalid Records -> Transform to Standard Format -> Enrich with External Data -> Load to Data Warehouse -> Generate Reports -> Notify Stakeholders",
+    
+    tool(diagram_generator(
+        "flowchart",
+        PipelineDesc,
+        "Data Processing Pipeline",
+        "pipeline.md"
+    ), PipelineDiagram),
+    
+    % Create a state diagram for pipeline states
+    StatesDesc = "Idle -> Processing: Start Job. Processing -> Validating: Data Loaded. Validating -> Transforming: Valid Data. Validating -> Error: Invalid Data. Transforming -> Loading: Transform Complete. Loading -> Complete: Load Successful. Loading -> Error: Load Failed. Error -> Idle: Reset. Complete -> Idle: Job Done",
+    
+    tool(diagram_generator(
+        "state",
+        StatesDesc,
+        "Pipeline State Machine",
+        "pipeline_states.md"
+    ), StateDiagram),
+    
+    end_thinking,
+    answer("Data Pipeline Documentation"),
+    answer("## Process Flow"),
+    answer(PipelineDiagram),
+    answer("## State Machine"),
+    answer(StateDiagram).
+
+% Analyze multiple data files and create comparison diagram
+agent_main :-
+    log("Comparing Q1 and Q2 performance"),
+    
+    % Analyze both quarters
+    tool(data_analyzer("q1_sales.csv", "summary"), Q1Analysis),
+    tool(data_analyzer("q2_sales.csv", "summary"), Q2Analysis),
+    
+    % Generate comparison insights using LLM
+    format(string(ComparisonPrompt), "Compare Q1 and Q2 sales data:\n\nQ1:\n~w\n\nQ2:\n~w\n\nProvide key differences and trends.", [Q1Analysis, Q2Analysis]),
+    generate(ComparisonPrompt, Comparison),
+    
+    % Create visualizations for each quarter
+    tool(diagram_generator("bar", "q1_sales.csv", "Q1 Sales", "q1_chart.md"), Q1Chart),
+    tool(diagram_generator("bar", "q2_sales.csv", "Q2 Sales", "q2_chart.md"), Q2Chart),
+    
+    end_thinking,
+    answer("## Quarterly Comparison Report"),
+    answer(Comparison),
+    answer("### Q1 Performance"),
+    answer(Q1Chart),
+    answer("### Q2 Performance"),
+    answer(Q2Chart).

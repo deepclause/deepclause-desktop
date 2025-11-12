@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+    <title>DeepClause - Neurosymbolic AI System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo-section">
+                <img src="assets/logo_only.png" alt="DeepClause Logo" class="logo-icon">
+                <div class="logo-text">
+                    <h1 class="app-title">DeepClause</h1>
+                    <p class="app-subtitle">Neurosymbolic AI System</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="toggleDmlPaneBtn" class="btn btn-icon-toggle" title="Toggle DML Files Pane">
+                    <span class="icon">📋</span>
+                    <span class="label">DML Files</span>
+                </button>
+                <button id="toggleWorkspacePaneBtn" class="btn btn-icon-toggle" title="Toggle Workspace Pane">
+                    <span class="icon">📁</span>
+                    <span class="label">Workspace</span>
+                </button>
+                <button id="selectWorkspaceBtn" class="btn btn-secondary" title="Select workspace folder">
+                    � Change Workspace
+                </button>
+                <button id="abortBtn" class="btn btn-danger" style="display: none;" title="Abort execution">
+                    ⏹️ Abort
+                </button>
+            </div>
+        </header>
+
+        <!-- Main content area -->
+        <div class="main-content">
+            <!-- Left Sidebar - DML Files -->
+            <aside id="dmlPane" class="sidebar sidebar-left">
+                <div class="sidebar-header">
+                    <h3>DML Files</h3>
+                    <div class="sidebar-actions">
+                        <button id="refreshFilesBtn" class="btn-icon" title="Refresh file list">🔄</button>
+                        <button id="listFilesBtn" class="btn-icon" title="List files in chat">💬</button>
+                    </div>
+                </div>
+                <div id="fileList" class="file-list">
+                    <div class="loading">Loading files...</div>
+                </div>
+            </aside>
+
+            <!-- Chat/Console area -->
+            <main class="chat-container">
+                <div id="chatOutput" class="chat-output">
+                    <div class="welcome-message">
+                        <div class="welcome-header">
+                            <img src="assets/deepclause.png" alt="DeepClause" class="welcome-logo">
+                            <h2>Welcome to DeepClause 🧠</h2>
+                        </div>
+                        <p class="welcome-tagline">The Missing Logic Agent.</p>
+                        <div class="quick-tips">
+                            <h3>Quick Tips:</h3>
+                            <ul>
+                                <li>Type a natural language request to find or create DML files</li>
+                                <li>Use <code>/create &lt;description&gt;</code> to generate new DML code</li>
+                                <li>Use <code>/run &lt;filename&gt;</code> to execute a specific DML file</li>
+                                <li>Use <code>/list</code> to see all available DML files</li>
+                                <li>Use <code>/save &lt;filename&gt;</code> to save generated DML code</li>
+                                <li>Click on files in the sidebars to interact with them</li>
+                                <li>Toggle the side panels using the buttons in the header</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input area -->
+                <div class="input-container">
+                    <textarea 
+                        id="userInput" 
+                        class="user-input" 
+                        placeholder="Type your request here... (Shift+Enter for new line, Enter to send)"
+                        rows="3"
+                    ></textarea>
+                    <button id="sendBtn" class="btn btn-primary">
+                        <span class="btn-icon">🚀</span>
+                        <span class="btn-label">Send</span>
+                    </button>
+                </div>
+            </main>
+
+            <!-- Right Sidebar - Workspace Files -->
+            <aside id="workspacePane" class="sidebar sidebar-right">
+                <div class="sidebar-header">
+                    <h3>Workspace</h3>
+                    <div class="sidebar-actions">
+                        <button id="refreshWorkspaceBtn" class="btn-icon" title="Refresh workspace">🔄</button>
+                    </div>
+                </div>
+                <div id="workspaceList" class="workspace-list">
+                    <div class="loading">Loading workspace...</div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- Status bar -->
+        <footer class="status-bar">
+            <span id="statusText">Ready</span>
+            <span id="pathInfo" class="path-info"></span>
+        </footer>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+A basic deep research agent, that tried to craft web queries to understand a topic and give a comprehensive answer supported by sources.
