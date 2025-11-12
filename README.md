@@ -19,7 +19,7 @@
 
 ---
 
-## 📥 Download 
+## 📥 Download   
 
 > **Status**: DeepClause is currently in active development (v0.0.1). Binary releases coming soon.
 
