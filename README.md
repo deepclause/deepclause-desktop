@@ -1,7 +1,7 @@
 # DeepClause
 
 <p align="center">
-  <img src="src/electron/renderer/public/assets/logo_only.png" alt="DeepClause Logo" width="120"/>
+  <img src="src/electron/assets/logo_only.png" alt="DeepClause Logo" width="120"/>
 </p>
 
 <p align="center">
@@ -17,11 +17,6 @@
   <a href="#-development">Development</a>
 </p>
 
----
-
-## 🎬 Demo Videos
-
-TODO
 
 ---
 
@@ -34,7 +29,6 @@ TODO
 Modern LLMs excel at natural language understanding but fail at:
 - ✗ Deterministic execution (same input → same output)
 - ✗ Complex logical reasoning (constraint solving, formal verification)
-- ✗ Multi-step workflows with branching and backtracking
 - ✗ Verifiable, inspectable decision-making
 
 Traditional logic programming (Prolog) excels at these but lacks:
@@ -56,6 +50,10 @@ Whether you're conducting research, processing data, solving logic puzzles, or b
 ---
 
 ## 🎮 Basic Usage Guide
+
+### Setup API Keys and Tools
+
+Configure API Keys, tools and MCP servers in the Settings (button on top right corner). Some tools may require setting some environment variables (also possible in the Settings Dialog).
 
 ### Natural Language Mode
 
@@ -94,23 +92,6 @@ When a DML skill requires input, interactive dialogs will appear automatically:
 - **Multi-select lists** for choosing multiple items
 - **Text inputs** for custom values
 
-No manual parameter configuration needed—the interface guides you through each step.
-
----
-
-## 📥 Download
-
-> **Status**: DeepClause is currently in active development (v0.0.1).
-
-**Pre-release downloads** (available soon):
-- [Windows (x64)](https://github.com/apfadler/DeepClauseCLI/releases) - `.exe` installer
-- [macOS (Intel)](https://github.com/apfadler/DeepClauseCLI/releases) - `.dmg` 
-- [macOS (Apple Silicon)](https://github.com/apfadler/DeepClauseCLI/releases) - `.dmg`
-- [Linux (x64)](https://github.com/apfadler/DeepClauseCLI/releases) - `.AppImage` or `.deb` 
-
-**Requirements**: 
-- OpenAI API key or compatible LLM provider (Anthropic, Google, OpenRouter, etc.)
-- For search tools: API keys for either Serper, Brave or You.com
 
 ---
 
@@ -177,49 +158,9 @@ Unlike pure LLM agents where decisions are opaque, DeepClause makes every choice
 - Explicit tool invocation (no hidden capabilities)
 
 
-
 ---
 
-## 💡 Use Cases
-
-### 📊 Research & Analysis
-**Problem**: Conducting literature reviews, market research, or competitive analysis requires gathering data from multiple sources, synthesizing findings, and generating structured reports.
-
-**DeepClause Solution**: Create DML skills that orchestrate multi-step research workflows:
-- Search academic databases and web sources
-- Extract key information with LLM semantic understanding
-- Use Prolog logic to verify completeness and identify gaps
-- Generate citation-backed reports with proper attribution
-
-**Example**: `deep_research.dml` - Automatically generates comprehensive research reports with citations
-
-### 🧩 Logic Puzzles, Constraint Solving, linear optimization
-**Problem**: Solving Sudoku, N-Queens, scheduling problems, or combinatorial optimization requires systematic search and constraint propagation.
-
-**DeepClause Solution**: Leverage SWI-Prolog's CLP(FD) library:
-- Define constraints declaratively
-- Let Prolog's constraint solver find solutions
-- Use LLM to explain solutions in natural language
-- Visualize results with generated diagrams
-
-**Example**: `logic_puzzle.dml` - Constraint-based puzzle solver with step-by-step explanations
-
-
-### 🤖 ReAct-Style Agents
-**Problem**: Building agents that reason about available tools, plan multi-step actions, and adapt based on observations.
-
-**DeepClause Solution**: Implement ReAct (Reasoning + Acting) loop natively in DML:
-- LLM generates thoughts and action plans
-- Prolog manages the reasoning loop and history
-- Tools execute actions with type-safe invocation
-- Deterministic control flow prevents hallucinated actions
-
-**Example**: `react_agent.dml` - General-purpose ReAct agent with 30-step planning
-
-
----
-
-## 🎯 Examples
+## 🎯 DML Examples
 
 ### Example 1: Hello World
 
@@ -397,48 +338,6 @@ User: /run deep_research.dml
 User: /explain
 ```
 
-**DeepClause responds with:**
-
-```markdown
-## Execution Explanation
-
-### What the program was designed to do
-This program conducted comprehensive research on your topic by gathering 
-information from multiple sources and synthesizing it into a structured report.
-
-### The execution flow
-1. Performed initial web search to understand the topic broadly
-2. Analyzed search results to identify key themes and concepts
-3. Generated 5 targeted search queries for deeper investigation
-4. Executed those searches and gathered detailed information
-5. Verified that enough quality information was collected
-6. Structured the findings into a logical report outline
-7. Wrote each section with proper citations
-8. Saved the final report to your workspace
-
-### Decision points
-**Symbolic Logic Decisions:**
-- Validating search result format (checking for non-empty strings)
-- Controlling the research loop (try initial → try targeted → fallback)
-- Verifying information sufficiency (counting sources, checking completeness)
-- Managing file I/O (opening, writing, closing research_report.md)
-
-**AI/LLM Decisions:**
-- Understanding the initial search results to create topic overview
-- Crafting targeted search queries based on gaps found
-- Extracting key information and associating with sources
-- Generating the report structure and section titles
-- Writing natural language summaries of findings
-
-### The final result
-Successfully generated a comprehensive research report saved to 
-'research_report.md'. The report includes 8 sections with citations 
-to 12 unique sources.
-
-**Reliability estimate:** High - multiple sources cross-referenced, 
-logical structure validated, all citations properly attributed.
-```
-
 **Why this matters:**
 - **Transparency**: You see exactly which parts used AI reasoning vs deterministic logic
 - **Trust**: Understand why certain decisions were made
@@ -452,29 +351,6 @@ logical structure validated, all citations properly attributed.
 - **[DML Language Reference](docs/dml_reference.md)** - Complete guide to DML syntax, built-in predicates, and execution model
 - **[Architecture Security](docs/dml_reference.md#security-benefits-of-the-three-layer-architecture)** - Deep dive into the three-layer isolation model
 - **Example Skills** - See `src/electron/initial_examples/*.dml` for 20+ working examples
-
----
-
-## 🚀 Getting Started
-
-### Using Pre-built Binaries (Coming Soon)
-
-1. Download the installer for your platform
-2. Install and launch DeepClause
-3. Configure your LLM provider (OpenAI, Anthropic, etc.) in Settings
-4. Try example skills or chat naturally to create new ones
-
-### Commands
-
-- **Natural language**: Just describe what you want - DeepClause will find or create appropriate skills
-
-or use any of these slash commands:
-
-- `/run [skill.dml]` - Execute a specific skill
-- `/create [description]` - Generate a new skill from natural language
-- `/explain` - Get a plain-English explanation of the last execution, showing which decisions were symbolic logic vs AI
-- `/learn [skill.dml]` - Add skill to context for future skill creation
-- `/help` - Show all available commands
 
 ---
 
@@ -555,6 +431,7 @@ DeepClause is in active development. Contributions welcome! Areas of focus:
 1. **New Tool Integrations** - Add tools to `src/dml-js/tools.js`
 2. **Example Skills** - Create `.dml` examples showcasing interesting use cases
 3. **Documentation** - Improve guides, tutorials, API docs
+4. **Running Benchmarks***
 
 and many more!
 
@@ -574,9 +451,13 @@ DeepClause builds on decades of research in:
 ---
 
 
-## 📜 License
+## 📜 License and ## Third-Party Components
 
-ISC License - See [LICENSE](LICENSE) for details.
+MIT License
+
+This project also includes:
+- **SWI-Prolog** (BSD-2-Clause) - https://www.swi-prolog.org/
+- **V86** (BSD-2-Clause) - https://github.com/copy/v86
 
 ---
 
