@@ -1,0 +1,97 @@
+% --- Main Agent Logic ---
+
+% Branch 1: Solve the linear programming problem using Constraint Logic Programming over Reals (CLP(R)).
+% This is the most direct and efficient way to solve the problem as stated.
+agent_main :-
+    log("Formulating the candy factory production problem as a linear programming model."),
+
+    % Define the decision variables.
+    % X, Y, Z are the total kilograms of each candy brand.
+    % XA, XB, XC are the kilograms of raw materials A, B, C used for Brand X.
+    % YA, YB, YC are the kilograms of raw materials A, B, C used for Brand Y.
+    % ZA, ZB, ZC are the kilograms of raw materials A, B, C used for Brand Z.
+    Vars = [X, Y, Z, XA, XB, XC, YA, YB, YC, ZA, ZB, ZC],
+
+    
+
+    % The {} block is specific to CLP(R) and holds all the equations and inequalities.
+    {
+        % Non-negativity constraints for all decision variables
+        X >= 0, Y >= 0, Z >= 0,
+        XA >= 0, XB >= 0, XC >= 0,
+        YA >= 0, YB >= 0, YC >= 0,
+        ZA >= 0, ZB >= 0, ZC >= 0,
+
+        % Mass Balance Constraints: The sum of raw materials must equal the total product weight.
+        X = XA + XB + XC,
+        Y = YA + YB + YC,
+        Z = ZA + ZB + ZC,
+
+        % Raw Material Proportion Constraints (based on the table)
+        % Brand X
+        XA >= 0.60 * X, % A is at least 60% of X
+        XC =< 0.20 * X, % C is at most 20% of X
+        % Brand Y
+        YA >= 0.30 * Y, % A is at least 30% of Y
+        YC =< 0.50 * Y, % C is at most 50% of Y
+        % Brand Z
+        ZA = 0,         % A is not used in Z
+        ZC =< 0.60 * Z, % C is at most 60% of Z
+
+        % Monthly Raw Material Usage Limits
+        XA + YA + ZA =< 2000, % Total A used <= 2000 kg
+        XB + YB + ZB =< 2500, % Total B used <= 2500 kg
+        XC + YC + ZC =< 1200,  % Total C used <= 1200 kg
+
+        % Define the objective function: Maximize total profit.
+        % Profit = Total Revenue - Total Processing Cost - Total Raw Material Cost
+        Profit = (3.40 * X + 2.85 * Y + 2.25 * Z) - % Revenue
+             (0.50 * X + 0.40 * Y + 0.30 * Z) - % Processing Cost
+             (2.00 * (XA + YA + ZA) + 1.50 * (XB + YB + ZB) + 1.00 * (XC + YC + ZC)), % Material Cost
+
+        TotalA = XA + YA + ZA,
+        TotalB = XB + YB + ZB,
+        TotalC = XC + YC + ZC
+    },
+
+    log("Constraints have been applied. Now, maximizing the profit function."),
+
+    % Use the maximize/1 predicate from the CLP(R) library to find the optimal solution.
+    maximize(Profit),
+
+    log("Optimal solution found. Preparing the final report."),
+    end_thinking,
+
+    % Present the final results to the user in a clear, formatted way.
+    answer("## Optimal Production Plan for Candy Factory"),
+    answer("Based on the provided data, I have formulated a linear programming model to maximize your monthly profit. Here is the optimal production plan:"),
+    format(string(MaxProfit), "The maximum achievable profit is **~w**.", [Profit]),
+    answer(MaxProfit),
+    answer("### Production Quantities:"),
+    format(string(ProductionTable), "| Candy Brand | Optimal Production (kg) |\n|---|---|\n| Brand X | ~w |\n| Brand Y | ~w |\n| Brand Z | ~w |", [X, Y, Z]),
+    answer(ProductionTable),
+    answer("### Raw Material Usage:"),
+    format(string(MaterialTable), "| Raw Material | Used (kg) | Limit (kg) |\n|---|---|---|\n| A | ~w | 2000 |\n| B | ~w | 2500 |\n| C | ~w | 1200 |", [TotalA, TotalB, TotalC]),
+    answer(MaterialTable),
+    answer("This plan ensures that all production constraints regarding raw material proportions and monthly limits are met while maximizing your total profit.").
+
+% Branch 2: Fallback if the CLP(R) solver fails or is not available.
+% This branch will search for online tools that can solve the problem.
+agent_main :-
+    log(error="The internal CLP(R) solver failed to find a solution. This could be due to an issue with the constraints or the solver itself."),
+    log("Searching for alternative online linear programming solvers."),
+
+    % Perform a web search to find online tools.
+    tool(web_search("online linear programming solver tool"), SearchResults),
+
+    end_thinking,
+    system("You are a helpful assistant. The primary method for solving a user's linear programming problem failed. You need to provide a helpful alternative by suggesting online tools."),
+    observation("I was unable to solve the linear programming problem directly. However, I have found some online tools that you can use to input the equations and find the solution."),
+    observation(SearchResults),
+    chat("Please present the search results as a list of alternative tools for the user.").
+
+% Branch 3: Final fallback for any unexpected errors.
+agent_main :-
+    log(error="A critical and unexpected error occurred during the process."),
+    end_thinking,
+    answer("I am very sorry, but I have encountered an unexpected internal error and cannot complete your request at this time. Please try again later.").

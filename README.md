@@ -19,28 +19,17 @@
 
 ---
 
-## 📥 Download   
+## 🎬 Demo Videos
 
-> **Status**: DeepClause is currently in active development (v0.0.1). Binary releases coming soon.
-
-**Pre-release downloads** (available soon):
-- [Windows (x64)](https://github.com/apfadler/DeepClauseCLI/releases) - `.exe` installer
-- [macOS (Intel)](https://github.com/apfadler/DeepClauseCLI/releases) - `.dmg` 
-- [macOS (Apple Silicon)](https://github.com/apfadler/DeepClauseCLI/releases) - `.dmg`
-- [Linux (x64)](https://github.com/apfadler/DeepClauseCLI/releases) - `.AppImage` or `.deb`
-
-**Requirements**: 
-- 8GB RAM minimum (16GB recommended)
-- OpenAI API key or compatible LLM provider (Anthropic, Google, OpenRouter, etc.)
-- For search tools: API keys for either Serper, Brave or You.com
+TODO
 
 ---
 
 ## 🧠 What is DeepClause?
 
-**DeepClause** is a **neurosymbolic AI agent** that bridges the gap between symbolic reasoning and neural language models. Unlike pure LLM-based agents that struggle with complex logic, multi-step reasoning, and deterministic behavior, DeepClause uses **DML (DeepClause Meta Language)** - a Prolog-based DSL - to encode agent behaviors as executable logic programs.
+**DeepClause** is a **neurosymbolic Agentic AI system** that bridges the gap between symbolic reasoning and neural language models. Unlike pure LLM-based agents that struggle with complex logic, multi-step reasoning, and deterministic behavior, DeepClause uses **DML (DeepClause Meta Language)** - a Prolog-based DSL - to encode agent behaviors as executable logic programs.
 
-### The Core Insight
+### Core Motivation
 
 Modern LLMs excel at natural language understanding but fail at:
 - ✗ Deterministic execution (same input → same output)
@@ -54,6 +43,76 @@ Traditional logic programming (Prolog) excels at these but lacks:
 - ✗ Flexible adaptation to novel tasks
 
 **DeepClause combines both paradigms**: Prolog handles the logical scaffolding, control flow, and symbolic reasoning, while LLMs provide natural language understanding, semantic extraction, and content generation.
+
+
+### Quick Introduction to the DeepClause Desktop-App
+
+The **DeepClause Desktop Application** is an Electron-based development environment that provides an intuitive interface for creating, managing, and executing DML (DeepClause Meta Language) programs. Built with React and TypeScript, the app features a modern chat-based interface where you interact with an intelligent agent that can discover existing DML skills, create new ones on-the-fly from natural language descriptions, and orchestrate complex multi-step workflows. The interface includes specialized panels for browsing your DML skill library, exploring workspace files, monitoring the embedded Linux VM console (V86 emulator), and managing conversation history—all synchronized through a unified state management system powered by Zustand.
+
+Under the hood, the desktop app orchestrates a sophisticated three-layer architecture: the **JavaScript/Node.js layer** (Electron main process) handles file I/O, settings management, and tool integration; the **WebAssembly layer** runs the SWI-Prolog WASM module for symbolic reasoning and DML execution; and the **sandboxed V86 Linux VM** provides isolated execution for Python scripts and bash commands. The agent system uses a hybrid planning approach—it first analyzes your request, searches for relevant existing DML files, determines if modifications or new skills are needed, then generates a multi-step execution plan. Each DML file can declare typed parameters (file pickers, dropdowns, multi-select) that are automatically rendered as interactive input dialogs, and execution output is streamed in real-time with support for progress indicators, structured logs, and rich markdown rendering including embedded diagrams (Mermaid), code highlighting, and workspace file previews.
+
+Whether you're conducting research, processing data, solving logic puzzles, or building custom AI agents, the desktop app provides a polished, self-contained environment where symbolic reasoning meets neural intelligence—no terminal commands required, just natural language conversations that compile into executable logic programs.
+
+---
+
+## 🎮 Basic Usage Guide
+
+### Natural Language Mode
+
+Simply describe what you want to accomplish in natural language. The DeepClause agent will:
+1. Analyze your request and search for relevant existing DML skills
+2. Determine if existing skills can solve the task or if new ones are needed
+3. Create an execution plan and either run existing DML files or generate new ones
+4. Execute the plan and stream results in real-time
+
+**Example**: "Research recent advances in quantum computing and create a summary report with citations"
+
+### Slash Commands
+
+For more direct control, use these commands in the chat interface:
+
+- **`/run [skill.dml]`** - Execute a specific DML skill file
+  - *Tip: Click any DML file in the left sidebar to auto-populate this command*
+  
+- **`/create [description]`** - Generate a new DML skill from a natural language description
+  - *Example*: `/create Search for Python tutorials and extract the top 5 beginner-friendly resources`
+  
+- **`/explain`** - Get a detailed explanation of the last execution
+  - Shows which decisions were made by symbolic logic vs AI/LLM
+  - Provides reliability estimates and step-by-step breakdowns
+  - Ideal for understanding, debugging, or learning how DML works
+  
+- **`/learn [skill.dml]`** - Add a skill to the agent's context for future reference
+  
+- **`/help`** - Display all available commands
+
+### Interactive Parameters
+
+When a DML skill requires input, interactive dialogs will appear automatically:
+- **File pickers** for selecting workspace files
+- **Dropdown menus** for single-choice options
+- **Multi-select lists** for choosing multiple items
+- **Text inputs** for custom values
+
+No manual parameter configuration needed—the interface guides you through each step.
+
+---
+
+## 📥 Download
+
+> **Status**: DeepClause is currently in active development (v0.0.1).
+
+**Pre-release downloads** (available soon):
+- [Windows (x64)](https://github.com/apfadler/DeepClauseCLI/releases) - `.exe` installer
+- [macOS (Intel)](https://github.com/apfadler/DeepClauseCLI/releases) - `.dmg` 
+- [macOS (Apple Silicon)](https://github.com/apfadler/DeepClauseCLI/releases) - `.dmg`
+- [Linux (x64)](https://github.com/apfadler/DeepClauseCLI/releases) - `.AppImage` or `.deb` 
+
+**Requirements**: 
+- OpenAI API key or compatible LLM provider (Anthropic, Google, OpenRouter, etc.)
+- For search tools: API keys for either Serper, Brave or You.com
+
+---
 
 ### Architecture Highlights
 
@@ -134,16 +193,17 @@ Unlike pure LLM agents where decisions are opaque, DeepClause makes every choice
 
 **Example**: `deep_research.dml` - Automatically generates comprehensive research reports with citations
 
-### 🧮 Data Processing & Validation
-**Problem**: Processing structured data requires complex transformations, validation rules, and error handling that's tedious to express in pure LLMs or pure Python.
+### 🧩 Logic Puzzles, Constraint Solving, linear optimization
+**Problem**: Solving Sudoku, N-Queens, scheduling problems, or combinatorial optimization requires systematic search and constraint propagation.
 
-**DeepClause Solution**: Combine Prolog's pattern matching with Python's data libraries:
-- Define validation rules declaratively in Prolog
-- Use constraint logic programming for complex business rules
-- Execute pandas/numpy transformations in the isolated VM
-- Generate human-readable error reports
+**DeepClause Solution**: Leverage SWI-Prolog's CLP(FD) library:
+- Define constraints declaratively
+- Let Prolog's constraint solver find solutions
+- Use LLM to explain solutions in natural language
+- Visualize results with generated diagrams
 
-**Example**: `advanced_data_workflow.dml` - ETL pipeline with constraint-based validation
+**Example**: `logic_puzzle.dml` - Constraint-based puzzle solver with step-by-step explanations
+
 
 ### 🤖 ReAct-Style Agents
 **Problem**: Building agents that reason about available tools, plan multi-step actions, and adapt based on observations.
@@ -156,38 +216,6 @@ Unlike pure LLM agents where decisions are opaque, DeepClause makes every choice
 
 **Example**: `react_agent.dml` - General-purpose ReAct agent with 30-step planning
 
-### 🧩 Logic Puzzles & Constraint Solving
-**Problem**: Solving Sudoku, N-Queens, scheduling problems, or combinatorial optimization requires systematic search and constraint propagation.
-
-**DeepClause Solution**: Leverage SWI-Prolog's CLP(FD) library:
-- Define constraints declaratively
-- Let Prolog's constraint solver find solutions
-- Use LLM to explain solutions in natural language
-- Visualize results with generated diagrams
-
-**Example**: `logic_puzzle.dml` - Constraint-based puzzle solver with step-by-step explanations
-
-### 📈 Interactive Data Science
-**Problem**: Exploratory data analysis requires iterative hypothesis testing, visualization, and statistical analysis.
-
-**DeepClause Solution**: Orchestrate Python data science stack from DML:
-- Request datasets via typed file parameters
-- Execute pandas/matplotlib/scikit-learn in VM
-- Generate visualizations and save to workspace
-- Explain statistical findings with LLM
-
-**Example**: `data_visualization.dml` - Interactive data analysis with automated insights
-
-### 🔍 Clinical Trial Search
-**Problem**: Finding relevant clinical trials requires querying ClinicalTrials.gov API, filtering by disease/phase/status, and presenting results in user-friendly format.
-
-**DeepClause Solution**: Encode search logic in Prolog, use LLM for query refinement:
-- Parse user's medical query
-- Construct API queries with Prolog term manipulation
-- Filter and rank results based on relevance criteria
-- Generate readable summaries with trial details
-
-**Example**: `query_clinicaltrials_gov.dml` - Structured clinical trial discovery
 
 ---
 
@@ -527,8 +555,8 @@ DeepClause is in active development. Contributions welcome! Areas of focus:
 1. **New Tool Integrations** - Add tools to `src/dml-js/tools.js`
 2. **Example Skills** - Create `.dml` examples showcasing interesting use cases
 3. **Documentation** - Improve guides, tutorials, API docs
-4. **Performance** - Optimize WASM execution, reduce LLM calls
-5. **Security** - Enhance sandboxing, add MCP server isolation
+
+and many more!
 
 Please open issues for bugs or feature requests.
 
@@ -545,40 +573,6 @@ DeepClause builds on decades of research in:
 
 ---
 
-## ⚖️ Strengths & Limitations
-
-### ✅ Strengths
-
-1. **Built-in Explainability**: `/explain` command automatically shows which decisions were symbolic logic vs AI - critical for regulated industries and trust
-2. **Deterministic Logic**: Unlike pure LLM agents, DML programs produce consistent outputs given same inputs
-3. **Inspectable Behavior**: Every decision is traceable to explicit Prolog clauses - no hidden prompts or black boxes
-4. **Formal Verification**: Logic programs can be formally analyzed, tested, and verified
-5. **Efficient Reasoning**: Constraint solving, pattern matching, and backtracking handled by optimized Prolog engine
-6. **Security Isolation**: Three-layer architecture provides defense-in-depth
-7. **Composability**: Creating complex workflows from simple building blocks
-8. **Graceful Degradation**: Multi-branch fallback strategies ensure robust error handling
-
-### ⚠️ Limitations
-
-1. **Learning Curve**: Requires understanding Prolog syntax and logic programming concepts
-2. **Early Stage**: v0.0.1 - APIs may change, bugs exist, documentation incomplete
-3. **Performance**: WASM Prolog slower than native; LLM calls add latency
-4. **LLM Dependency**: @-predicates require external LLM API - costs and rate limits apply
-5. **VM Overhead**: V86 emulator adds memory/CPU overhead (2GB+ RAM needed)
-6. **Limited Package Ecosystem**: VM has pre-installed packages only - can't `pip install` arbitrary libraries
-7. **MCP Security**: MCP servers not yet sandboxed - requires trusting configured servers
-8. **Debugging Tools**: Limited debugging UI - mostly relies on `log/1` predicates
-
-### 🔮 Future Directions
-
-- **Better IDE**: Syntax highlighting, autocomplete, inline docs for DML
-- **Skill Marketplace**: Share and discover community-created skills
-- **MCP Sandboxing**: Isolate MCP servers with proper permission models
-- **Distributed Execution**: Run DML skills on remote workers/cloud
-- **Formal Verification Tools**: Static analysis, property testing for DML
-- **Visual Programming**: Graph-based DML editor for non-programmers
-
----
 
 ## 📜 License
 
@@ -600,12 +594,6 @@ DeepClause stands on the shoulders of giants:
 
 ## 📧 Contact
 
-- **Website**: [deepclause.ai](https://www.deepclause.ai)
-- **GitHub**: [github.com/apfadler/DeepClauseCLI](https://github.com/apfadler/DeepClauseCLI)
-- **Issues**: [github.com/apfadler/DeepClauseCLI/issues](https://github.com/apfadler/DeepClauseCLI/issues)
-
----
-
-<p align="center">
-  <strong>Built with ❤️ for the neurosymbolic AI community</strong>
-</p>
+- **E-Mail**: andreas (at) deepclause.ai
+- **GitHub**: [github.com/deepclause/deepclause-desktop](https://github.com/deepclause/deepclause-desktop)
+- **Issues**: [github.com/deepclause/deepclause-desktop/issues](https://github.com/deepclause/deepclause-desktop/issues)

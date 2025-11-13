@@ -559,12 +559,15 @@ Output JSON Schema (summarizer):
 
     async searchWeb(query, params, headers) {
         const path = "/web/search";
+        //truncate query to at most 50 characters
+        const truncatedQuery = query.length > 50 ? query.substring(0, 50) + "..." : query;
+        console.log(`[Brave Search] Query: ${truncatedQuery}`);
         const searchParams = new URLSearchParams({
-            q: query,
-            count: params.count.toString(),
-            country: params.country,
+            q: truncatedQuery,
+            count: String(params.count || 10),
+            country: params.country || "us",
             search_lang: "en",
-            safesearch: params.safesearch,
+            safesearch: params.safesearch || "moderate",
         });
 
         if (params.freshness) {
@@ -574,8 +577,11 @@ Output JSON Schema (summarizer):
         const endpoint = `${this.base}/${this.version}${path}?${searchParams}`;
         const response = await fetch(endpoint, { headers });
 
+        
+
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${response.statusText}. Details: ${errorText}`);
         }
 
         return await response.json();

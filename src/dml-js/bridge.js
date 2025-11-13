@@ -1532,9 +1532,17 @@ Remember:
                     
                     // Write the term to file
                     swipl.FS.writeFile(tempTermFile, termWithDot);
+
+                    if (process.env.DEBUG) {
+                         const tempTermFile = `term_parse_${Date.now()}_${Math.random().toString(36).substring(7)}.pl`;
+                         const termWithDot = `${functorName}(${argsStr}).`;
+                    
+                        // Write the term to file
+                        fs.writeFileSync(tempTermFile, termWithDot);
+                    }
                     
                     // Read and parse the term from file
-                    const parseQuery = `read_file_to_string('${tempTermFile}', TermStr, []), 
+                    const parseQuery = `readutil:read_file_to_string('${tempTermFile}', TermStr, []), 
                                        read_term_from_atom(TermStr, Term, []), 
                                        Term =.. [_Functor|Args]`;
                     const parseResult = await swipl.prolog.query(parseQuery, {}).next();
@@ -1547,7 +1555,31 @@ Remember:
                     }
                     
                     if (parseResult && parseResult.value && parseResult.value.Args) {
-                        newVars.push(parseResult.value.Args);
+                        let args = parseResult.value.Args;
+                        
+                        // Recursively unwrap nested list structures that result from SWIPL WASM binding
+                        const unwrapNestedLists = (obj) => {
+                            if (Array.isArray(obj)) {
+                                // If it's an array with a single element that is also an array, unwrap it
+                                if (obj.length === 1 && Array.isArray(obj[0])) {
+                                    return unwrapNestedLists(obj[0]);
+                                }
+                                // Otherwise, recursively process each element
+                                return obj.map(unwrapNestedLists);
+                            } else if (obj && typeof obj === 'object') {
+                                // For objects (like Prolog terms), recursively process all properties
+                                const result = {};
+                                for (const [key, value] of Object.entries(obj)) {
+                                    result[key] = unwrapNestedLists(value);
+                                }
+                                return result;
+                            }
+                            // Base case: primitive values
+                            return obj;
+                        };
+                        
+                        args = unwrapNestedLists(args);
+                        newVars.push(args);
                     } else {
                         // Fallback: use the term as-is
                         console.warn(`Prolog parsing returned no Args, using term as-is: ${termStr}`);
@@ -1667,7 +1699,8 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                         let rawSearch;
                         if (searchTool.name === 'brave_search') {
                             // Brave search expects: forward(query, searchType, count, country, safesearch, freshness)
-                            rawSearch = await searchTool.forward(searchQuery, "web", 8, "us", "moderate", null);
+                            // Note: count must be at least 10 for web/news searches
+                            rawSearch = await searchTool.forward(searchQuery, "web", 10, "us", "moderate", null);
                         } else if (searchTool.name === 'web_search') {
                             // Google search expects: forward(query, progressCallback, numResults)
                             rawSearch = await searchTool.forward(searchQuery, null, 8);
@@ -1763,7 +1796,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                     use_module(library(quasi_quotations)),
                     use_module(library(strings)),
                     use_module(library(lists)),
-                    read_file_to_string('${tmpPath}', DMLCode, []),
+                    readutil:read_file_to_string('${tmpPath}', DMLCode, []),
                     cmdline:init_cooperative_engine(DMLCode, 'validate_engine', 'validate_mem', [], py{}, Success, Error)
                 `;
                 const initResult = await swipl.prolog.query(q).next();
@@ -2152,8 +2185,9 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                 use_module(library(random)),
                 use_module(library(http/json)),
                 use_module(library(dicts)),
+                use_module(library(sort)),
     
-                read_file_to_string('${tempFile}', DMLCode, []),
+                readutil:read_file_to_string('${tempFile}', DMLCode, []),
                 writeln("Read code"),
                 %writeln(DMLCode),
                 cmdline:init_cooperative_engine(DMLCode, '${engineId}', '${memoryId}', Memory,  Params, Success, Error).
@@ -2186,7 +2220,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                     console.log('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
                     
                     const miData = swipl.FS.readFile('mi.qsave');
-                    fs.writeFileSync('src/dml-core/mi.qsave', miData);
+                    fs.writeFileSync('src/electron/initial_workspace/mi.qsave', miData);
 
                     writeLog('Saved current Prolog state to src/dml-core/mi.qsave');
                     console.log('DML_DEV_MODE: Saved current Prolog state to src/dml-core/mi.qsave');

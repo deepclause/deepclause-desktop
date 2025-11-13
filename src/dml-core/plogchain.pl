@@ -147,6 +147,7 @@ answer(What) :-
   yield("\n<end_thinking>\n\n"),
   yield(What).
 
+
 wait_for_input(What, Output) :-
   format(string(WhatStr), '~w', [What]),
   string_length(WhatStr, L),
@@ -1311,8 +1312,15 @@ mi(log(A, [H|T]), Memory, Context, Session, Params) :-
   format(string(LogStr), AStr, [H|T]),
   yield(log>LogStr).
 
+
 mi(log(A), Memory, Context, Session, Params) :-
   yield(log>A).
+
+mi(answer(A, [H|T]), Memory, Context, Session, Params) :-
+  format(string(AStr), '~w', [A]),
+  format(string(LogStr), AStr, [H|T]),
+  yield("\n<end_thinking>\n\n"),
+  yield(LogStr).
 
 
 mi(param(Key, Description, Value), Memory, Context, Session, Params) :-
@@ -1392,6 +1400,7 @@ mi(read_file_to_string(File, Content, Options), Memory, Context, Session, Params
   Goal \= format(_,_),
   Goal \= yield(_),
   Goal \= answer(_),
+  Goal \= answer(_,_),
   Goal \= get_memory(_),
   Goal \= set_memory(_),
   Goal \= wait_for_input(A,B),
@@ -1507,6 +1516,7 @@ mi(Goal, Memory, Context, Session, Params) :-
   Goal \= format(_,_),
   Goal \= yield(_),
   Goal \= answer(_),
+  Goal \= answer(_,_),
   Goal \= get_memory(_),
   Goal \= set_memory(_),
   Goal \= wait_for_input(A,B),
@@ -1602,6 +1612,7 @@ mi(Goal, Memory, Context, Session, Params) :-
   Goal \= format(_,_),
   Goal \= yield(_),
   Goal \= answer(_),
+  Goal \= answer(_,_),
   Goal \= get_memory(_),
   Goal \= set_memory(_),
   Goal \= wait_for_input(A,B),
