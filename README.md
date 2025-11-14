@@ -8,6 +8,10 @@
   <strong>The Missing Logic Agent</strong><br/>
 </p>
 
+---
+
+![docs/app.png](docs/app.png)
+
 
 ---
 
@@ -20,7 +24,15 @@ The goal of this project is to allow users to build **accountable agents**. Thes
 ## Hello World Example: Build a basic deep research agent in less than 5 minutes
 
 1. Open the App
-2. Create a new .md file with the following content in the workspace folder and save it as "prompt.md"
+
+2. Open Settings, add API Keys and choose the underlying LLMs. Most of the development has been done based on a combination of Gemini 2.5. Flash and Pro. 
+
+![docs/settings.png](docs/settings.png)
+
+![docs/api_keys.png](docs/api_keys.png)
+
+
+3. Create a new .md file with the following content in the workspace folder and save it as "prompt.md"
 
 ```
 I'd like you to build a "Deep Research Agent". It should work as follows:
@@ -38,15 +50,15 @@ General Rules:
 ```
 
 
-3. Enter the following command in the chat input
+4. Enter the following command in the chat input
 
 ```
 /create :prompt.md
 ```
 
-4. This will generate DML code that can be saved in a DML file (click the save button at the bottom of to the generated code in the chat window), as filename choose e.g. "myagent.dml"
+5. This will generate DML code that can be saved in a DML file (click the save button at the bottom of to the generated code in the chat window), as filename choose e.g. "myagent.dml"
 
-5. Run the agent
+6. Run the agent
 ```
 /run myagent
 ```
@@ -99,6 +111,7 @@ While this project is still at an early stage, several key design principles dis
 - Known bugs and issues:
     - Aborting a running DML execution / agent session does not always work
     - Probably thousands of big and small bugs everywhere
+    - This has mostly been tested with Gemini 2.5 Flash/Pro, but should work well with any combination of SOTA model (GPT-5, Sonnet 4-5) and their smaller versions such as e.g. GPT-5-mini. We welcome attempts at trying the system with different combinations of models, both small and large, open or closed. Please report your experiences.
 
 - A pure CLI based version is currently in development, potentially with an MCP interface or another type of API. In case you are interested, please let us know how and if you would like to use DeepClause beyond the Desktop app.
 
