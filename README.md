@@ -1,4 +1,4 @@
-# DeepClause
+# DeepClause - A Neurosymbolic AI System
 
 <p align="center">
   <img src="src/electron/assets/logo_only.png" alt="DeepClause Logo" width="120"/>
@@ -8,21 +8,14 @@
   <strong>The Missing Logic Agent</strong><br/>
 </p>
 
-<p align="center">
-  <a href="#-download">Download</a> •
-  <a href="#-what-is-deepclause">What is DeepClause?</a> •
-  <a href="#-key-features">Features</a> •
-  <a href="#-use-cases">Use Cases</a> •
-  <a href="#-examples">Examples</a> •
-  <a href="#-development">Development</a>
-</p>
-
 
 ---
 
 ## 🧠 What is DeepClause?
 
 **DeepClause** is a **neurosymbolic Agentic AI system** that bridges the gap between symbolic reasoning and neural language models. Unlike pure LLM-based agents that struggle with complex logic, multi-step reasoning, and deterministic behavior, DeepClause uses **DML (DeepClause Meta Language)** - a Prolog-based DSL - to encode agent behaviors as executable logic programs.
+
+The goal of this project is to allow users to build **accountable agents**. These are systems that are not only contextually aware (LLMs) and goal-oriented (Agents), but also logically sound (Prolog), introspectively explainable, and operationally safe. This integrated approach addresses the critical shortcomings of purely neural systems by embedding them within a framework of formal logic and secure execution, laying a principled foundation for the future of trustworthy autonomous systems.
 
 ### Core Motivation
 
@@ -39,21 +32,60 @@ Traditional logic programming (Prolog) excels at these but lacks:
 **DeepClause combines both paradigms**: Prolog handles the logical scaffolding, control flow, and symbolic reasoning, while LLMs provide natural language understanding, semantic extraction, and content generation.
 
 
+## Inspiration and Acknowlegdments
+This work has heavily been inspired the article ["Virtual Machinations: Using Large Language Models as Neural Computers"](https://queue.acm.org/detail.cfm?id=3676287). 
+
+Additionally, we like to express our gratitude to the [SWI Prolog](https://www.swi-prolog.org/) Project in general and Jan Wielemaker in particular. Wihtout the decades of work that went into SWI Prolog, the development of DeepClause would not have been possible.
+
+## What Makes DeepClause Different?
+
+While this project is still at an early stage, several key design principles distinguish it from existing approaches:
+
+- **Declarative Workflows Over Prompts**: DeepClause combines aspects of DSPy and CodeAct by encoding agent behavior in executable code rather than system prompts. Each workflow step has explicit input/output constraints, ensuring type safety (to some extent) and logical consistency. DML programs can be written by humans or generated dynamically by LLMs, enabling a "compile-then-execute" pattern—essentially "auto-generated DSPy in Prolog."
+
+- **Sandboxed Execution Enables Safe Sharing**: DML runs within a custom meta-interpreter that maintains complete execution state tracking and enforces strict sandboxing. The tight coupling between symbolic code and LLM outputs makes prompt injections more likely to trigger recoverable errors than cause security vulnerabilities. **This security model allows DML files to be safely shared, versioned, and distributed—users can run community-contributed skills without risking system compromise, similar to how packages work in traditional programming ecosystems.**
+
+- **Hybrid Memory Architecture**: DeepClause separates conversational memory from execution state. LLM calls only occur where semantically necessary, avoiding the context pollution common in pure chat-based agents. This architecture enables efficient handling of long-running tasks without degradation.
+
+- **Native Support for Search and Backtracking**: Built on Prolog's execution model, DML naturally explores solution trees through backtracking. This makes it well-suited for implementing test-time compute strategies and multi-branch reasoning patterns.
+
+- **Reproducibility as a First-Class Concern**: Once created, DML programs can be saved, parameterized, and re-executed with consistent logical behavior—a stark contrast to the non-deterministic nature of typical LLM agents. This enables debugging, version control, and reliable deployment.
+
+- **Seamless Symbolic Integration**: As a Prolog-based system, DeepClause provides native interoperability with constraint solvers (CLP(FD), CLP(R)), knowledge graphs, theorem provers, and other symbolic reasoning tools.
+
+
+## State of the Project (as of 11/2025)
+
+- Very early pre-release binaries of the Desktop App for Mac OS (Arm), Linux x86-64 and Windows are available in the releases section.
+
+- We are releasing the core Prolog code that runs the DML execution engine only in binary form for now. Depending on future developments we might opt to release its source code as well.
+
+- Known bugs and issues:
+    - Aborting a running DML execution / agent session does not always work
+    - Probably thousands of big and small bugs everywhere
+
+- A pure CLI based version is currently in development, potentially with an MCP interface or another type of API. In case you are interested, please let us know how and if you would like to use DeepClause beyond the Desktop app.
+
+- We are releasing this as at a very early stage in order to collect feedback and are hoping to incite interesting discussions in the AI researcher and developer community.
+
+- We know our appraoch is somewhat unconventional, but somebody had to try it, I guess :-)
+
+- This project has been mostly developed by a single person together with a Coding Agent. So we hope you won't mind the relatively large amount of LLM-generated documentation and Javascript code :-)
+
+- **This is highly experimental software! Use at your own risk**
+
 ### Quick Introduction to the DeepClause Desktop-App
 
-The **DeepClause Desktop Application** is an Electron-based development environment that provides an intuitive interface for creating, managing, and executing DML (DeepClause Meta Language) programs. Built with React and TypeScript, the app features a modern chat-based interface where you interact with an intelligent agent that can discover existing DML skills, create new ones on-the-fly from natural language descriptions, and orchestrate complex multi-step workflows. The interface includes specialized panels for browsing your DML skill library, exploring workspace files, monitoring the embedded Linux VM console (V86 emulator), and managing conversation history—all synchronized through a unified state management system powered by Zustand.
+The **DeepClause Desktop Application** is an Electron-based development environment that provides an intuitive interface for creating, managing, and executing DML (DeepClause Meta Language) programs. The app features a modern chat-based interface where you interact with an intelligent agent that can discover existing DML skills, create new ones on-the-fly from natural language descriptions, and orchestrate complex multi-step workflows. The interface includes specialized panels for browsing your DML skill library, exploring workspace files, monitoring the embedded Linux VM console (V86 emulator), and managing conversation history.
 
-Under the hood, the desktop app orchestrates a sophisticated three-layer architecture: the **JavaScript/Node.js layer** (Electron main process) handles file I/O, settings management, and tool integration; the **WebAssembly layer** runs the SWI-Prolog WASM module for symbolic reasoning and DML execution; and the **sandboxed V86 Linux VM** provides isolated execution for Python scripts and bash commands. The agent system uses a hybrid planning approach—it first analyzes your request, searches for relevant existing DML files, determines if modifications or new skills are needed, then generates a multi-step execution plan. Each DML file can declare typed parameters (file pickers, dropdowns, multi-select) that are automatically rendered as interactive input dialogs, and execution output is streamed in real-time with support for progress indicators, structured logs, and rich markdown rendering including embedded diagrams (Mermaid), code highlighting, and workspace file previews.
+Under the hood, the desktop app orchestrates a three-layer architecture: the **JavaScript/Node.js layer** (Electron main process) handles file I/O, settings management, and tool integration; the **WebAssembly layer** runs the SWI-Prolog WASM module for symbolic reasoning and DML execution; and the **sandboxed V86 Linux VM** provides isolated execution for Python scripts and bash commands. The agent system uses a hybrid planning approach—it first analyzes your request, searches for relevant existing DML files, determines if modifications or new skills are needed, then generates a multi-step execution plan. Each DML file can declare typed input parameters (file pickers, dropdowns, multi-select) that are automatically rendered as interactive input dialogs, and execution output is streamed in real-time with support for progress indicators, structured logs, and rich markdown rendering including embedded diagrams (Mermaid), code highlighting, and workspace file previews.
 
-Whether you're conducting research, processing data, solving logic puzzles, or building custom AI agents, the desktop app provides a polished, self-contained environment where symbolic reasoning meets neural intelligence—no terminal commands required, just natural language conversations that compile into executable logic programs.
 
----
-
-## 🎮 Basic Usage Guide
+## 🎮 Desktop App Usage Guide
 
 ### Setup API Keys and Tools
 
-Configure API Keys, tools and MCP servers in the Settings (button on top right corner). Some tools may require setting some environment variables (also possible in the Settings Dialog).
+Configure API Keys, tools and MCP servers in the Settings dialog (button on top right corner). Some tools may require setting some environment variables (also possible in the Settings Dialog).
 
 ### Natural Language Mode
 
@@ -97,70 +129,20 @@ When a DML skill requires input, interactive dialogs will appear automatically:
 
 ### Architecture Highlights
 
-DeepClause runs on a **unique three-layer security architecture**:
+DeepClause runs on a **unique three-layer architecture**:
 
 1. **JavaScript Layer** (Electron/Node.js) - Orchestration, LLM integration, tool calling
 2. **WebAssembly Layer** (SWI-Prolog WASM Module) - Symbolic reasoning, logic execution
 3. **Isolated Linux VM** (V86 emulator) - Sandboxed Python/Bash execution for heavy computation
 
-This architecture provides:
-- **Memory Safety**: WASM prevents buffer overflows and memory corruption
-- **Filesystem Isolation**: All file operations restricted to workspace directory
-- **VM Sandboxing**: Untrusted code execution isolated from host system
-- **Explicit Permissions**: No ambient authority - capabilities must be invoked explicitly
-
-Learn more: [DML Reference Documentation](docs/dml_reference.md)
+Both SWI-Prolog WASM and the V86 emulator may only access the DeepClause workspace folder on the  host sytem. The V86 emulator has no network access for now.
 
 ---
 
-## ✨ Key Features
+## 🎯 DML Language Examples
 
-### 🎯 Hybrid Execution Model
-- **Symbolic reasoning** via Prolog (pattern matching, unification, constraint solving)
-- **Neural understanding** via LLMs (semantic extraction, content generation)
-- **Seamless integration** through `@-predicates` that transform natural language instructions into Prolog predicates
+[DML Reference Documentation](docs/dml_reference.md) (Work in progress)
 
-### 🔍 Explainability Out of the Box
-- **Transparent Logic**: Every skill is readable Prolog source code - no hidden prompts or black boxes
-- **Execution Tracing**: See exactly which predicates were called, which tools were invoked, and in what order
-- **AI vs Logic Attribution**: The `/explain` command automatically identifies which decisions were made by:
-  - **Symbolic logic** (deterministic rules, pattern matching, constraint solving)
-  - **AI/LLM** (semantic understanding, content generation, @-predicates)
-- **Plain-English Summaries**: Get non-technical explanations of what happened during execution
-- **Reliability Estimates**: Understand confidence levels based on execution output
-- **Step-by-Step Walkthroughs**: See the reasoning process, not just the final answer
-
-Unlike pure LLM agents where decisions are opaque, DeepClause makes every choice traceable and explainable - critical for regulated industries, debugging, and building trust.
-
-### 🔧 Rich Tool Ecosystem
-- **Web Search**: Google, Brave, Google Scholar integration
-- **Linux VM**: Execute Python scripts, bash commands, data processing pipelines
-- **File I/O**: Read/write workspace files with automatic path sandboxing
-- **MCP Protocol**: Extensible tool integration via Model Context Protocol
-- **Custom Tools**: Mermaid diagrams, data visualization, web scraping
-
-### 🧩 Declarative Skills (DML Programs)
-- **Skills as Code**: Every capability encoded as a `.dml` file
-- **Multi-branch Logic**: Sophisticated fallback strategies via Prolog's backtracking
-- **Inspectable & Debuggable**: Read the actual logic, no hidden prompt engineering
-- **Composable**: Creating complex workflows by orchestrating skills
-
-### 🔄 Interactive Workflows
-- **Typed Parameters**: File pickers, dropdowns, multi-select inputs
-- **Streaming Output**: Real-time progress updates during long-running tasks
-- **User Input**: Pause execution to request clarification or additional data
-- **Cooperative Execution**: Non-blocking async execution model
-
-### 🛡️ Security by Design
-- Defense-in-depth architecture with multiple isolation boundaries
-- Workspace-restricted file access (no system file reading)
-- VM sandboxing for untrusted code execution
-- Explicit tool invocation (no hidden capabilities)
-
-
----
-
-## 🎯 DML Examples
 
 ### Example 1: Hello World
 
@@ -242,47 +224,102 @@ agent_main :-
 - If Branch 2 **succeeds**, execution **stops** (Branch 3 never tried)
 - Branch 3 always succeeds - guarantees graceful degradation
 
-### Example 4: Constraint Logic Programming
+### Example 4: OCR + Sudoku - Constraint Logic Programming
 
 Solve combinatorial problems declaratively:
 
 ```prolog
-:- use_module(library(clpfd)).
+% Standard CLP(FD) Sudoku solver
+parse_sudoku_string_to_prolog(String, List) :-
+    @("You are given a string containing a sudoku in the format `[[5,3,0,0,7,0,0,0,0], [6,0,0,1,9,5,0,0,0], ...]`, 
+    please parse this into a valid prolog list term and output it in the List variable.
+    Do not use 0 for blank fields, instead use an underscore to denote a blank field.").
 
-agent_main :-
-    % Define Sudoku puzzle (0 = empty cell)
-    Puzzle = [
-        [5,3,0, 0,7,0, 0,0,0],
-        [6,0,0, 1,9,5, 0,0,0],
-        % ... more rows
-    ],
-    
-    % Solve using CLP(FD)
-    sudoku(Puzzle, Solution),
-    
-    % Visualize solution
-    create_sudoku_diagram(Solution, Diagram),
-    answer("Solved! 🎉\n\n{Diagram}").
+format_solved_grid(SolvedGrid, MarkdownGrid) :-
+    @("Take the `SolvedGrid`, which is a list of lists of numbers (1-9), and format it into a clean, 
+    human-readable markdown table representing the Sudoku board. Add separators for the 3x3 blocks. 
+    The output `MarkdownGrid` should be a single markdown string.").
 
-sudoku(Rows, Rows) :-
+% Sudoku solver using Constraint Logic Programming over Finite Domains (CLP(FD))
+% This is a standard, well-known Prolog implementation for solving Sudoku.
+sudoku(Rows) :-
+    % Ensure the grid is 9x9
     length(Rows, 9),
-    maplist(length_(9), Rows),
-    append(Rows, Vs), Vs ins 1..9,
+    maplist(same_length(Rows), Rows),
+    % Flatten the grid into a single list of variables
+    append(Rows, Vs),
+    % The domain for each variable is 1 to 9
+    Vs ins 1..9,
+    % All numbers in each row must be unique
     maplist(all_distinct, Rows),
+    % Transpose the grid to get columns, and ensure they are also unique
     transpose(Rows, Columns),
     maplist(all_distinct, Columns),
+    % Define the 3x3 blocks and ensure they are unique
     Rows = [A,B,C,D,E,F,G,H,I],
-    blocks(A, B, C), blocks(D, E, F), blocks(G, H, I),
-    label(Vs).
+    blocks(A, B, C),
+    blocks(D, E, F),
+    blocks(G, H, I),
+    % Find a valid assignment of numbers to the variables
+    maplist(labeling([ff]), Rows).
+
+% Helper for the solver: defines the 3x3 block constraint
+blocks([], [], []).
+blocks([N1,N2,N3|Ns1], [N4,N5,N6|Ns2], [N7,N8,N9|Ns3]) :-
+    all_distinct([N1,N2,N3,N4,N5,N6,N7,N8,N9]),
+    blocks(Ns1, Ns2, Ns3).
+
+% Main agent logic
+
+% Branch 1: Successful image recognition and solving
+agent_main :-
+    param("image_path:file", "The path to the image file containing the Sudoku puzzle.", ImagePath),
+    ( ImagePath \= "" -> true ; (log(error="The 'image_path' parameter is missing."), fail) ),
+    log(task="Attempting to solve Sudoku directly from the image: '{ImagePath}'."),
+
+    % Step 1: Use the visualizer tool to perform OCR and extract the grid
+    log(task="Analyzing image to extract the puzzle grid and numbers."),
+    tool(visualizer(ImagePath,"Identify the Sudoku grid. Perform 
+            Optical Character Recognition (OCR) on each cell. 
+            Represent the grid as a Prolog list of lists, where each inner list is a row. 
+            Use the integer 0 to represent empty cells. The output `SudokuGrid` must be in this 
+            format, for example: `[[5,3,0,0,7,0,0,0,0], [6,0,0,1,9,5,0,0,0], ...]`. 
+            If a valid 9x9 grid cannot be reliably extracted, then output nothing"), ToolOutput),
+
+    parse_sudoku_string_to_prolog(ToolOutput, UnsolvedGrid),
+    ( UnsolvedGrid \= [] ->
+         log(task="Successfully extracted the grid from the image.")\ 
+    ; 
+        (log(error="Could not recognize a valid Sudoku grid in the image."), fail) 
+    ),
+
+    yield("Grid = {UnsolvedGrid}"),
+
+    % Step 2: Solve the puzzle using the CLP(FD) solver
+    log(task="Solving the puzzle..."),
+    sudoku(UnsolvedGrid), % This predicate solves the grid by unifying the variables
+    log(task="Puzzle solved successfully."),
+
+    % Step 3: Format the solved grid into a markdown table
+    log(task="Formatting the solution for display."),
+    format_solved_grid(UnsolvedGrid, SolvedGridMarkdown),
+
+    end_thinking,
+    system("You are a helpful assistant that has just solved a Sudoku puzzle from an image for the user."),
+    observation("I have successfully analyzed the image, extracted the puzzle, and found the solution."),
+    observation(SolvedGridMarkdown),
+    chat("Please give me the solution to this Sudoku.").
+
 ```
 
 **What happens**:
-- Prolog's CLP(FD) solver finds valid Sudoku solution
+- SWI-Prolog's CLP(FD) solver finds valid Sudoku solution
 - No brute-force search needed - constraint propagation guides search
 - Solution guaranteed to satisfy all constraints
-- LLM generates readable explanation
 
-### Example 5: Python Data Processing
+
+
+### Example 5: Python and file reading with file selecto dialog
 
 Execute complex computations in isolated VM:
 
@@ -327,7 +364,7 @@ plt.savefig('analysis.png')
 4. Script executed in sandboxed Linux VM (no host access)
 5. Results parsed and displayed with embedded chart
 
-### Example 6: Explainability in Action
+### Example 6: Explainability
 
 After running any skill, use `/explain` to understand what happened:
 
@@ -338,11 +375,6 @@ User: /run deep_research.dml
 User: /explain
 ```
 
-**Why this matters:**
-- **Transparency**: You see exactly which parts used AI reasoning vs deterministic logic
-- **Trust**: Understand why certain decisions were made
-- **Debugging**: If something went wrong, you know where to look
-- **Learning**: Understand how DML programs work by seeing them explained
 
 ---
 
@@ -388,27 +420,6 @@ npm run electron:dev
 
 This will start both the Vite dev server for the renderer process and the Electron main process with hot reload enabled.
 
-### Project Structure
-
-```
-wasm/
-├── src/
-│   ├── electron/          # Electron app
-│   │   ├── main/         # Main process (Node.js)
-│   │   ├── renderer/     # Renderer process (React UI)
-│   │   └── initial_examples/  # Example DML skills
-│   ├── dml-js/           # JavaScript bridge & tools
-│   │   ├── bridge.js     # WASM ↔ JS orchestration
-│   │   └── tools.js      # Tool implementations
-│   ├── dml-core/         # SWI-Prolog WASM core
-│   │   ├── plogchain.pl  # Meta-interpreter (mi/5)
-│   │   └── cmdline.pl    # Cooperative engine
-│   └── main.js           # CLI entry point
-├── vendor/               # SWI-Prolog WASM & V86 binaries
-├── workspace/            # User workspace (sandboxed)
-├── docs/                 # Documentation
-└── package.json
-```
 
 ### Building
 
@@ -431,7 +442,7 @@ DeepClause is in active development. Contributions welcome! Areas of focus:
 1. **New Tool Integrations** - Add tools to `src/dml-js/tools.js`
 2. **Example Skills** - Create `.dml` examples showcasing interesting use cases
 3. **Documentation** - Improve guides, tutorials, API docs
-4. **Running Benchmarks***
+4. **Running Benchmarks** - Where are DeepClause's strength and weaknesses, what can we do better?
 
 and many more!
 
