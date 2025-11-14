@@ -17,6 +17,42 @@
 
 The goal of this project is to allow users to build **accountable agents**. These are systems that are not only contextually aware (LLMs) and goal-oriented (Agents), but also logically sound (Prolog), introspectively explainable, and operationally safe. This integrated approach addresses the critical shortcomings of purely neural systems by embedding them within a framework of formal logic and secure execution, laying a principled foundation for the future of trustworthy autonomous systems.
 
+## Hello World Example: Build a basic deep research agent in less than 5 minutes
+
+1. Open the App
+2. Create a new .md file with the following content in the workspace folder and save it as "prompt.md"
+
+```
+I'd like you to build a "Deep Research Agent". It should work as follows:
+
+0. One parameter with a user topic/question.
+1. Do an initial websearch to broadly understand the topic
+2. Craft a small number of searches in order to find relevant content
+3. Check if the content is generally enough to fulfill the request
+4. Generate a structure and start writing all sections.
+5. Finally synthesize a report, save it, then present a short summary to the user and mention the report saved in the file.
+
+General Rules:
+- Keep track and cite all sources (use [number] where number references to a source)
+- Add a list of all sources at the end of the report.
+```
+
+
+3. Enter the following command in the chat input
+
+```
+/create :prompt.md
+```
+
+4. This will generate DML code that can be saved in a DML file (click the save button at the bottom of to the generated code in the chat window), as filename choose e.g. "myagent.dml"
+
+5. Run the agent
+```
+/run myagent
+```
+
+For more examples in the form of some screen recordings please visit ![http://deepclause.github.io](http://deepclause.github.io).
+
 ### Core Motivation
 
 Modern LLMs excel at natural language understanding but fail at:
@@ -124,18 +160,6 @@ When a DML skill requires input, interactive dialogs will appear automatically:
 - **Multi-select lists** for choosing multiple items
 - **Text inputs** for custom values
 
-
----
-
-### Architecture Highlights
-
-DeepClause runs on a **unique three-layer architecture**:
-
-1. **JavaScript Layer** (Electron/Node.js) - Orchestration, LLM integration, tool calling
-2. **WebAssembly Layer** (SWI-Prolog WASM Module) - Symbolic reasoning, logic execution
-3. **Isolated Linux VM** (V86 emulator) - Sandboxed Python/Bash execution for heavy computation
-
-Both SWI-Prolog WASM and the V86 emulator may only access the DeepClause workspace folder on the  host sytem. The V86 emulator has no network access for now.
 
 ---
 
