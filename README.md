@@ -111,6 +111,7 @@ While this project is still at an early stage, several key design principles dis
 - Known bugs and issues:
     - Aborting a running DML execution / agent session does not always work
     - Probably thousands of big and small bugs everywhere
+    - Testing and Development has been done based on Gemini 2.5 Flash/Pro as underlying LLMs, but any combination of SOTA model with smaller counterpart should work ok. Please be welcome to try DeepClause with all sort of models, both big and small, open and closed.
 
 - A pure CLI based version is currently in development, potentially with an MCP interface or another type of API. In case you are interested, please let us know how and if you would like to use DeepClause beyond the Desktop app.
 
