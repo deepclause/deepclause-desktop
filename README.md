@@ -25,7 +25,7 @@ The goal of this project is to allow users to build **accountable agents**. Thes
 
 1. Open the App
 
-2. Open Settings, add API Keys and choose the underlying LLMs. Most of the development has been done based on a combination of Gemini 2.5. Flash and Pro. 
+2. Open Settings, add API Keys and choose which LLMs you would like to use for which part of a DML execution. A key feature of DeepClause is that DML Execution, Generation and Agent may use different LLMs. We generally recommend using a frontier model such as GPT-5, Gemini Pro 2.5 or Claude 4.5 as the converter model. For the "Goal model", used during DML execution, a smaller / cheaper model may be chosen (e.g. Gemini 2.5 Flash). 
 
 ![docs/settings.png](docs/settings.png)
 
@@ -65,6 +65,8 @@ General Rules:
 
 For more examples in the form of some screen recordings please visit [deepclause.github.io](http://deepclause.github.io).
 
+## Background 
+
 ### Core Motivation
 
 Modern LLMs excel at natural language understanding but fail at:
@@ -101,6 +103,19 @@ While this project is still at an early stage, several key design principles dis
 
 - **Seamless Symbolic Integration**: As a Prolog-based system, DeepClause provides native interoperability with constraint solvers (CLP(FD), CLP(R)), knowledge graphs, theorem provers, and other symbolic reasoning tools.
 
+## 🔧 Key Features of DML
+
+**DML (DeepClause Meta Language)** extends Prolog with specialized predicates for neurosymbolic programming. At its core are **@-predicates**—a unique mechanism for structured prediction where prolog relations can be defined via LLM prompts. Unlike traditional prompting, @-predicates define typed input-output relationships that are verified by the Prolog runtime, enabling type-safe semantic transformations (as fa).
+
+```prolog
+extract_temperature(WeatherData, Temperature) :- 
+    @("Extract temperature from WeatherData in celsius and output in Temperature as a string").
+
+classify_sentiment(Text, Sentiment) :- 
+    @("Analyze the sentiment of Text and return either 'positive', 'negative', or 'neutral' in Sentiment").
+```
+
+Beyond @-predicates, DML provides a rich set of interaction primitives: `system/1` sets the conversational context for subsequent LLM calls; `observation/1` adds factual information to the working memory without triggering generation; `chat/1` initiates a conversational turn with the LLM using accumulated context; and `generate/1` produces streaming text output. Together, these predicates enable fine-grained control over e.g. "think-observe-respond" loops while maintaining full separation between logical reasoning (handled by Prolog) and semantic understanding (delegated to the LLM). This architecture ensures that every LLM invocation is purposeful, auditable, and tightly integrated with the symbolic execution flow.
 
 ## State of the Project (as of 11/2025)
 
@@ -112,6 +127,7 @@ While this project is still at an early stage, several key design principles dis
     - Aborting a running DML execution / agent session does not always work
     - Probably thousands of big and small bugs everywhere
     - Testing and Development has been done based on Gemini 2.5 Flash/Pro as underlying LLMs, but any combination of SOTA model with smaller counterpart should work ok. Please be welcome to try DeepClause with all sort of models, both big and small, open and closed.
+    - Execution in the embedded WASM Linux VM can be very slow.
 
 - A pure CLI based version is currently in development, potentially with an MCP interface or another type of API. In case you are interested, please let us know how and if you would like to use DeepClause beyond the Desktop app.
 
@@ -123,20 +139,20 @@ While this project is still at an early stage, several key design principles dis
 
 - **This is highly experimental software! Use at your own risk**
 
-### Quick Introduction to the DeepClause Desktop-App
+## Short Introduction to the DeepClause Desktop-App
 
 The **DeepClause Desktop Application** is an Electron-based development environment that provides an intuitive interface for creating, managing, and executing DML (DeepClause Meta Language) programs. The app features a modern chat-based interface where you interact with an intelligent agent that can discover existing DML skills, create new ones on-the-fly from natural language descriptions, and orchestrate complex multi-step workflows. The interface includes specialized panels for browsing your DML skill library, exploring workspace files, monitoring the embedded Linux VM console (V86 emulator), and managing conversation history.
 
 Under the hood, the desktop app orchestrates a three-layer architecture: the **JavaScript/Node.js layer** (Electron main process) handles file I/O, settings management, and tool integration; the **WebAssembly layer** runs the SWI-Prolog WASM module for symbolic reasoning and DML execution; and the **sandboxed V86 Linux VM** provides isolated execution for Python scripts and bash commands. The agent system uses a hybrid planning approach—it first analyzes your request, searches for relevant existing DML files, determines if modifications or new skills are needed, then generates a multi-step execution plan. Each DML file can declare typed input parameters (file pickers, dropdowns, multi-select) that are automatically rendered as interactive input dialogs, and execution output is streamed in real-time with support for progress indicators, structured logs, and rich markdown rendering including embedded diagrams (Mermaid), code highlighting, and workspace file previews.
 
 
-## 🎮 Desktop App Usage Guide
+### 🎮 Desktop App Usage Guide
 
-### Setup API Keys and Tools
+#### Setup API Keys and Tools
 
 Configure API Keys, tools and MCP servers in the Settings dialog (button on top right corner). Some tools may require setting some environment variables (also possible in the Settings Dialog).
 
-### Natural Language Mode
+#### Natural Language Mode
 
 Simply describe what you want to accomplish in natural language. The DeepClause agent will:
 1. Analyze your request and search for relevant existing DML skills
@@ -146,7 +162,7 @@ Simply describe what you want to accomplish in natural language. The DeepClause 
 
 **Example**: "Research recent advances in quantum computing and create a summary report with citations"
 
-### Slash Commands
+#### Slash Commands
 
 For more direct control, use these commands in the chat interface:
 
@@ -165,7 +181,7 @@ For more direct control, use these commands in the chat interface:
   
 - **`/help`** - Display all available commands
 
-### Interactive Parameters
+#### Interactive Parameters
 
 When a DML skill requires input, interactive dialogs will appear automatically:
 - **File pickers** for selecting workspace files
@@ -179,7 +195,6 @@ When a DML skill requires input, interactive dialogs will appear automatically:
 ## 🎯 DML Language Examples
 
 [DML Reference Documentation](docs/dml_reference.md) (Work in progress)
-
 
 ### Example 1: Hello World
 
@@ -195,9 +210,9 @@ agent_main :-
 - `answer/1` sends final response to user
 - Execution completes
 
-### Example 2: Web Search with LLM Extraction
+### Example 2: Web Search with Structured Prediction (@-predicates)
 
-Combine tool calling with semantic understanding:
+Combine tool calling with @-predicates:
 
 ```prolog
 agent_main :-
@@ -355,12 +370,18 @@ agent_main :-
 - Solution guaranteed to satisfy all constraints
 
 
-
-### Example 5: Python and file reading with file selecto dialog
+### Example 5: Python execution in VM and file reading/writing.
 
 Execute complex computations in isolated VM:
 
 ```prolog
+% python
+% Description: Add your description here
+
+% Define parameters if needed
+% param(key, 'Description', default_value).
+
+% Your DML code here
 agent_main :-
     param("data_file:file", "Select CSV dataset", DataFile),
     
@@ -370,7 +391,6 @@ agent_main :-
     % Generate Python analysis script
     Script = {|string||
 import pandas as pd
-import matplotlib.pyplot as plt
 from io import StringIO
 
 # Read CSV from stdin
@@ -379,19 +399,20 @@ df = pd.read_csv(StringIO('''~w'''))
 # Statistical analysis
 stats = df.describe().to_json()
 print(stats)
-
-# Create visualization
-df.plot(kind='bar')
-plt.savefig('analysis.png')
 |},
     format(string(FullScript), Script, [CSV]),
+
+    open("script.py", write, Stream),
+    format(Stream, "~w", [FullScript]),
+    close(Stream),
     
     % Execute in VM
-    tool(vm_exec(FullScript), StatsJSON),
+    tool(vm_exec("python3 script.py"), Results),
     
     % Parse and present results
-    atom_json_dict(StatsJSON, Stats, []),
-    answer("Analysis complete! 📊\n\n![Chart](analysis.png)\n\nStatistics: {Stats}").
+    end_thinking, 
+    observation(Results),
+    chat("This is the python output generated by the pandas describe function. Please explain it to me!").
 ```
 
 **What happens**:
