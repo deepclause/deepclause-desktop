@@ -8,7 +8,7 @@
   <strong>The Missing Logic Agent</strong><br/>
 </p>
 
----
+--
 
 ![docs/app.png](docs/app.png)
 
@@ -63,7 +63,7 @@ General Rules:
 /run myagent
 ```
 
-For more examples in the form of some screen recordings please visit ![http://deepclause.github.io](http://deepclause.github.io).
+For more examples in the form of some screen recordings please visit [deepclause.github.io](http://deepclause.github.io).
 
 ### Core Motivation
 
@@ -111,7 +111,6 @@ While this project is still at an early stage, several key design principles dis
 - Known bugs and issues:
     - Aborting a running DML execution / agent session does not always work
     - Probably thousands of big and small bugs everywhere
-    - This has mostly been tested with Gemini 2.5 Flash/Pro, but should work well with any combination of SOTA model (GPT-5, Sonnet 4-5) and their smaller versions such as e.g. GPT-5-mini. We welcome attempts at trying the system with different combinations of models, both small and large, open or closed. Please report your experiences.
 
 - A pure CLI based version is currently in development, potentially with an MCP interface or another type of API. In case you are interested, please let us know how and if you would like to use DeepClause beyond the Desktop app.
 
