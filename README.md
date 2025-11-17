@@ -119,7 +119,7 @@ Beyond @-predicates, DML provides a rich set of interaction primitives: `system/
 
 ## State of the Project (as of 11/2025)
 
-- Very early pre-release binaries of the Desktop App for Mac OS (Arm), Linux x86-64 and Windows are available in the releases section.
+- Very early pre-release binaries of the Desktop App for Mac OS (Arm), Linux x86-64 and Windows are available in the releases section. **Note: Due to missing code signing, the MacOS binaries do not wor right now. Please follow the development instructions at the end of this file to run the app on MacOS.** 
 
 - We are releasing the core Prolog code that runs the DML execution engine only in binary form for now. Depending on future developments we might opt to release its source code as well.
 
