@@ -455,7 +455,7 @@ User: /explain
 
 ```bash
 # Clone the repository
-git clone https://github.com/apfadler/DeepClauseCLI.git
+git clone https://github.com/deepclause/deepclause-desktop.git
 cd DeepClauseCLI/wasm
 
 # Install dependencies
