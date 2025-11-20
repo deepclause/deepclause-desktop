@@ -25,14 +25,14 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p vendor/v86/images
-          curl -fsSL -o vendor/v86/images/alpine.img "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ZV7ONFJA3XAUEHTPK0FR%2F20251113%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251113T160152Z&X-Amz-Expires=43200&X-Amz-Signature=df4fb3271dc251c985c8b3093d5b573b11783fe8c4eb2d766698581f5729c550&X-Amz-SignedHeaders=host&x-id=GetObject"
+          curl -fsSL -o vendor/v86/images/alpine.img "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=U0K278CH7E009DE52ZN8%2F20251120%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251120T035146Z&X-Amz-Expires=43200&X-Amz-Signature=21969a383c6952dbc69eeed9097d8824e07d722a5a7123943afc4c2b954715cf&X-Amz-SignedHeaders=host&x-id=GetObject"
         shell: bash
 
       - name: Download VM image (Windows)
         if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force -Path vendor\v86\images | Out-Null
-          Invoke-WebRequest -Uri "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=ZV7ONFJA3XAUEHTPK0FR%2F20251113%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251113T160152Z&X-Amz-Expires=43200&X-Amz-Signature=df4fb3271dc251c985c8b3093d5b573b11783fe8c4eb2d766698581f5729c550&X-Amz-SignedHeaders=host&x-id=GetObject" -OutFile vendor\v86\images\alpine.img
+          Invoke-WebRequest -Uri "https://s3.us-west-2.wasabisys.com/deepclause-public/alpine.img?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=U0K278CH7E009DE52ZN8%2F20251120%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20251120T035146Z&X-Amz-Expires=43200&X-Amz-Signature=21969a383c6952dbc69eeed9097d8824e07d722a5a7123943afc4c2b954715cf&X-Amz-SignedHeaders=host&x-id=GetObject" -OutFile vendor\v86\images\alpine.img
         shell: pwsh
         
       - name: Build/release Electron app

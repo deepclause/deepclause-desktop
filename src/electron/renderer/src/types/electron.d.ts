@@ -201,6 +201,26 @@ export interface ElectronAPI {
     conversation?: Conversation;
     error?: string;
   }>;
+
+  // Deployment operations
+  selectDeploymentFolder: () => Promise<{
+    success: boolean;
+    folderPath?: string;
+    canceled?: boolean;
+    error?: string;
+  }>;
+  deployDmlFileWithName: (options: {
+    dmlFilePath: string;
+    deploymentName: string;
+    outputFolder: string;
+    workspaceDir: string;
+  }) => Promise<{
+    success: boolean;
+    deploymentPath?: string;
+    deploymentName?: string;
+    canceled?: boolean;
+    error?: string;
+  }>;
 }
 
 export interface Paths {

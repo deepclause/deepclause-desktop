@@ -93,4 +93,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveConversation: (conversationId, messages, title) => ipcRenderer.invoke('save-conversation', conversationId, messages, title),
   deleteConversation: (conversationId) => ipcRenderer.invoke('delete-conversation', conversationId),
   renameConversation: (conversationId, newTitle) => ipcRenderer.invoke('rename-conversation', conversationId, newTitle),
+  
+  // Deployment operations
+  selectDeploymentFolder: () => ipcRenderer.invoke('select-deployment-folder'),
+  deployDmlFileWithName: (options) => ipcRenderer.invoke('deploy-dml-file-with-name', options),
 });

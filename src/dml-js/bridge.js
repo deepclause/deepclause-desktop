@@ -1,12 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import { generateText, tool as aiTool, streamText, experimental_createMCPClient, generateObject } from "ai";
 import { google } from '@ai-sdk/google';
 import {openrouter} from '@openrouter/ai-sdk-provider'
-import {openai} from '@ai-sdk/openai';
+import {createOpenAI, openai} from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import {anthropic} from '@ai-sdk/anthropic';
 import { getGoalModelConfig, getConverterModelConfig, resolveProvider } from '../config/models.js';
 
@@ -21,20 +26,52 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 
-const providerMap = { google: (m) => google(m), 
-    openai: (m) => openai(m),
-    anthropic: (m) => anthropic(m),
-    openrouter: (m) => openrouter(m)}
+const providerMap = {
+    google: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return google(model);
+    },
+    openai: (m) => {
+
+        console.log(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
+
+        // Accept either a model string or an object { model, baseURL }
+        const model = (m && typeof m === 'object') ? m.name : m;
+        const base = process.env.OPENAI_BASE_URL || process.env.OPENAI_BASE || process.env.OPENAI_API_BASE || "";
+        if (base) {
+            // Ensure common env vars are set so the OpenAI adapter picks them up
+            if (!process.env.OPENAI_API_BASE) 
+                process.env.OPENAI_API_BASE = base;
+            if (!process.env.OPENAI_BASE_URL)
+                 process.env.OPENAI_BASE_URL = base;
+        }
+        console.log(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
+        const provider = createOpenAICompatible({name: "provider", baseURL: base, apiKey: process.env.OPENAI_API_KEY});
+        return provider(model)
+    },
+    anthropic: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return anthropic(model);
+    },
+    openrouter: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return openrouter(model);
+    }
+};
 
 
 // Configuration from settings.json + environment variables (includes provider)
 // These are now functions to allow dynamic reloading when settings change
 function getCurrentGoalModelConfig() {
-    return getGoalModelConfig();
+    const config = getGoalModelConfig();
+    console.log(`[Bridge] Goal Model: ${config.provider}/${config.name} (API Key present: ${!!(process.env.OPENAI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.ANTHROPIC_API_KEY)})`);
+    return config;
 }
 
 function getCurrentConverterModelConfig() {
-    return getConverterModelConfig();
+    const config = getConverterModelConfig();
+    console.log(`[Bridge] Converter Model: ${config.provider}/${config.name}`);
+    return config;
 }
 
 // Legacy constants for backward compatibility
@@ -66,8 +103,15 @@ function getMcpConfigPath() {
         console.log(`[MCP] Using Electron config path: ${MCP_CONFIG_PATH}`);
     } else {
         // CLI mode - use project config
-        MCP_CONFIG_PATH = path.resolve(process.cwd(), 'config', 'settings.json');
-        console.log(`[MCP] Using CLI config path: ${MCP_CONFIG_PATH}`);
+        // First check if settings.json exists in the ../config directory (deployed mode)
+        const localSettings = path.join(__dirname, '..', 'config', 'settings.json');
+        if (fs.existsSync(localSettings)) {
+            MCP_CONFIG_PATH = localSettings;
+            console.log(`[MCP] Using local settings path: ${MCP_CONFIG_PATH}`);
+        } else {
+            MCP_CONFIG_PATH = path.resolve(process.cwd(), 'config', 'settings.json');
+            console.log(`[MCP] Using CLI config path: ${MCP_CONFIG_PATH}`);
+        }
     }
     
     return MCP_CONFIG_PATH;
@@ -2077,6 +2121,11 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
         if (workspaceDir) {
             parameters.workspace_path = "/workspace";
+            
+            // Set environment variable for session workspace
+            // This is used by tools like LinuxVMTool to mount the correct workspace
+            process.env.DML_CLI_WORKSPACE = workspaceDir;
+            console.log(`[Session ${sessionId}] Set DML_CLI_WORKSPACE to: ${workspaceDir}`);
         }
 
         // Prepare per-session file logging
@@ -2153,16 +2202,19 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                 return;
             }
 
-            //read all prolog modules
-            const resolver = getResourceResolver();
-            let cmdlineLoad = resolver ? resolver.readDmlCore('cmdline.pl') : fs.readFileSync('src/dml-core/cmdline.pl');
-            let dml_stringsLoad = resolver ? resolver.readDmlCore('dml_strings.pl') : fs.readFileSync('src/dml-core/dml_strings.pl');
-            let plogchainLoad = resolver ? resolver.readDmlCore('plogchain.pl') : fs.readFileSync('src/dml-core/plogchain.pl');
 
             
             // if dev env: save the current state using qsave_program 
             // and copy it to src/dml-core/mi.qsave
             if (process.env.DML_DEV_MODE) {
+
+                //read all prolog modules
+                const resolver = getResourceResolver();
+                let cmdlineLoad = resolver ? resolver.readDmlCore('cmdline.pl') : fs.readFileSync('src/dml-core/cmdline.pl');
+                let dml_stringsLoad = resolver ? resolver.readDmlCore('dml_strings.pl') : fs.readFileSync('src/dml-core/dml_strings.pl');
+                let plogchainLoad = resolver ? resolver.readDmlCore('plogchain.pl') : fs.readFileSync('src/dml-core/plogchain.pl');
+
+                
                 await swipl.prolog.load_string(cmdlineLoad.toString(), '/wasm/cmdline.pl');
                 await swipl.prolog.load_string(plogchainLoad.toString(), '/wasm/plogchain.pl');
                 await swipl.prolog.load_string(dml_stringsLoad.toString(), '/wasm/dml_strings.pl');
@@ -2186,6 +2238,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                 use_module(library(http/json)),
                 use_module(library(dicts)),
                 use_module(library(sort)),
+                use_module(library(dcg/basics)),
     
                 readutil:read_file_to_string('${tempFile}', DMLCode, []),
                 writeln("Read code"),
@@ -2222,11 +2275,11 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                     const miData = swipl.FS.readFile('mi.qsave');
                     fs.writeFileSync('src/electron/initial_workspace/mi.qsave', miData);
 
-                    writeLog('Saved current Prolog state to src/dml-core/mi.qsave');
-                    console.log('DML_DEV_MODE: Saved current Prolog state to src/dml-core/mi.qsave');
+                    writeLog('Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
+                    console.log('DML_DEV_MODE: Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
 
                 } catch (e) {
-                    const msg = `Error saving Prolog state to src/dml-core/mi.qsave: ${e.message}\n`;
+                    const msg = `Error saving Prolog state to src/electron/initial_workspace/mi.qsave: ${e.message}\n`;
                     writeLog(msg);
                     console.log(msg);
                     yield msg;

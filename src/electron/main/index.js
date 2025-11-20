@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { setupIpcHandlers } from './ipc-handlers.js';
 import { WorkspaceManager } from './workspace-manager.js';
+import { registerDeploymentHandlers } from './deployment-handler.js';
 import resourceResolver from './resource-resolver.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -149,6 +150,9 @@ app.whenReady().then(async () => {
 
   // Setup IPC handlers
   setupIpcHandlers(workspaceManager);
+  
+  // Register deployment handlers
+  registerDeploymentHandlers();
 
   // Create the window
   createWindow();

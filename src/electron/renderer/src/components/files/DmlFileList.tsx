@@ -6,6 +6,7 @@ import { DmlFileTree } from './DmlFileTree';
 import { DmlEditorDialog } from '../modals/DmlEditorDialog';
 import { ConfirmDialog } from '../modals/ConfirmDialog';
 import { NewDmlFileDialog } from '../modals/NewDmlFileDialog';
+import { DeploymentDialog } from '../DeploymentDialog';
 
 // Store for managing new file dialog state
 let openNewFileDialog: (() => void) | null = null;
@@ -13,6 +14,7 @@ let openNewFileDialog: (() => void) | null = null;
 export function DmlFileList() {
   const { dmlFiles, isLoadingDml, refreshDmlFiles } = useFileStore();
   const setPendingInput = useAppStore((state) => state.setPendingInput);
+  const currentPaths = useAppStore((state) => state.currentPaths);
 
   // Editor state
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -26,6 +28,10 @@ export function DmlFileList() {
 
   // New file dialog state
   const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false);
+
+  // Deployment dialog state
+  const [isDeployDialogOpen, setIsDeployDialogOpen] = useState(false);
+  const [deployingFilename, setDeployingFilename] = useState('');
 
   // Expose the function to open new file dialog
   openNewFileDialog = () => setIsNewFileDialogOpen(true);
@@ -55,6 +61,11 @@ export function DmlFileList() {
   const handleFileDelete = (filename: string) => {
     setDeletingFilename(filename);
     setIsDeleteDialogOpen(true);
+  };
+
+  const handleFileDeploy = (filename: string) => {
+    setDeployingFilename(filename);
+    setIsDeployDialogOpen(true);
   };
 
   const handleSaveFile = async (content: string, description: string) => {
@@ -138,6 +149,7 @@ export function DmlFileList() {
         onFileClick={handleFileClick}
         onFileEdit={handleFileEdit}
         onFileDelete={handleFileDelete}
+        onFileDeploy={handleFileDeploy}
       />
 
       <DmlEditorDialog
@@ -164,6 +176,17 @@ export function DmlFileList() {
         isOpen={isNewFileDialogOpen}
         onClose={() => setIsNewFileDialogOpen(false)}
         onConfirm={handleCreateNewFile}
+      />
+
+      <DeploymentDialog
+        isOpen={isDeployDialogOpen}
+        onClose={() => setIsDeployDialogOpen(false)}
+        dmlFilePath={deployingFilename}
+        workspaceDir={currentPaths?.workspace || ''}
+        onDeploymentComplete={(result: { deploymentPath: string; deploymentName: string }) => {
+          console.log('✅ Deployment created:', result.deploymentPath);
+          // Could show a success toast here
+        }}
       />
     </>
   );

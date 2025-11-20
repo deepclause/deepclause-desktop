@@ -5,6 +5,7 @@ import { tool as aiTool, generateText } from 'ai';
 import { google } from '@ai-sdk/google';
 import { openrouter } from '@openrouter/ai-sdk-provider';
 import { openai } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { execSync } from 'child_process';
@@ -21,11 +22,38 @@ import { truncate } from 'node:fs';
 import { getAgentModelConfig, resolveProvider } from '../config/models.js';
 
 // Provider map for resolving model providers
-const providerMap = { 
-    google: (m) => google(m), 
-    openai: (m) => openai(m),
-    anthropic: (m) => anthropic(m),
-    openrouter: (m) => openrouter(m)
+
+const providerMap = {
+    google: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return google(model);
+    },
+    openai: (m) => {
+
+        console.log(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
+
+        // Accept either a model string or an object { model, baseURL }
+        const model = (m && typeof m === 'object') ? m.name : m;
+        const base = process.env.OPENAI_BASE_URL || process.env.OPENAI_BASE || process.env.OPENAI_API_BASE || "";
+        if (base) {
+            // Ensure common env vars are set so the OpenAI adapter picks them up
+            if (!process.env.OPENAI_API_BASE) 
+                process.env.OPENAI_API_BASE = base;
+            if (!process.env.OPENAI_BASE_URL)
+                 process.env.OPENAI_BASE_URL = base;
+        }
+        console.log(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
+        const provider = createOpenAICompatible({name: "provider", baseURL: base, apiKey: process.env.OPENAI_API_KEY});
+        return provider(model)
+    },
+    anthropic: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return anthropic(model);
+    },
+    openrouter: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return openrouter(model);
+    }
 };
 
 // Agent model configuration
@@ -34,6 +62,8 @@ let agentModelConfig = null;
 function getAgentConfig() {
     if (!agentModelConfig) {
         agentModelConfig = getAgentModelConfig();
+        console.log(`[Tools] Agent Model: ${agentModelConfig.provider}/${agentModelConfig.name}`);
+        console.log(`[Tools] Environment Keys available: ${Object.keys(process.env).filter(k => k.endsWith('_KEY') || k.endsWith('_API')).join(', ')}`);
     }
     return agentModelConfig;
 }
@@ -204,6 +234,7 @@ Output JSON Schema:
     async forward(query, filterYear = null, num = 50) {
         const apiKey = process.env.SERPER_API_KEY;
         if (!apiKey) {
+            console.error("[GoogleSearchTool] SERPER_API_KEY is missing.");
             throw new Error("Missing API key. Make sure you have 'SERPER_API_KEY' in your env variables.");
         }
 
@@ -2692,25 +2723,44 @@ var sessionTools = {}
  */
 function loadToolSettings() {
     try {
-        // Try to get settings path from environment variable first
-        const homeDir = process.env.HOME || process.env.USERPROFILE;
-        if (!homeDir) {
-            console.warn('Could not determine home directory for settings');
-            return null;
+        // Use the same settings path resolution as models.js
+        let settingsPath = null;
+        
+        // Check if we're in Electron mode (has global.resourceResolver)
+        const resolver = typeof global !== 'undefined' ? global.resourceResolver : null;
+        
+        if (resolver) {
+            // Electron mode - use ~/.deepclause/config/settings.json
+            const homeDir = process.env.HOME || process.env.USERPROFILE;
+            if (!homeDir) {
+                console.warn('[Tools] Could not determine home directory for settings');
+                return null;
+            }
+            settingsPath = path.join(homeDir, '.deepclause', 'config', 'settings.json');
+        } else {
+            // CLI/Deployed mode - check for local settings.json first (deployed mode)
+            const __dirname = path.dirname(new URL(import.meta.url).pathname);
+            const localSettings = path.join(__dirname, '..', 'config', 'settings.json');
+            
+            if (fs.existsSync(localSettings)) {
+                settingsPath = localSettings;
+            } else {
+                // Fall back to project config
+                settingsPath = path.resolve(process.cwd(), 'config', 'settings.json');
+            }
         }
         
-        const settingsPath = path.join(homeDir, '.deepclause', 'config', 'settings.json');
-        
-        if (!fs.existsSync(settingsPath)) {
-            console.log('Settings file not found at:', settingsPath);
+        if (!settingsPath || !fs.existsSync(settingsPath)) {
+            console.log('[Tools] Settings file not found at:', settingsPath || 'undefined');
             return null;
         }
         
         const data = fs.readFileSync(settingsPath, 'utf-8');
         const settings = JSON.parse(data);
+        console.log('[Tools] Loaded tool settings from:', settingsPath);
         return settings.defaultTools || null;
     } catch (error) {
-        console.error('Error loading tool settings:', error);
+        console.error('[Tools] Error loading tool settings:', error);
         return null;
     }
 }

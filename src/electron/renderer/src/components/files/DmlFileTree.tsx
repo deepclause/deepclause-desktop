@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, FileText, Folder, FolderOpen, Brain, Edit2, Trash2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, Folder, FolderOpen, Brain, Edit2, Trash2, Rocket } from 'lucide-react';
 import type { DmlFile } from '../../types/dml';
 
 interface TreeNode {
@@ -14,9 +14,10 @@ interface DmlFileTreeProps {
   onFileClick: (filename: string) => void;
   onFileEdit?: (filename: string) => void;
   onFileDelete?: (filename: string) => void;
+  onFileDeploy?: (filename: string) => void;
 }
 
-export function DmlFileTree({ files, onFileClick, onFileEdit, onFileDelete }: DmlFileTreeProps) {
+export function DmlFileTree({ files, onFileClick, onFileEdit, onFileDelete, onFileDeploy }: DmlFileTreeProps) {
   // Build tree structure from flat file list
   const buildTree = (fileList: DmlFile[]): TreeNode => {
     const root: TreeNode = { name: 'root', path: '', children: [], files: [] };
@@ -59,6 +60,7 @@ export function DmlFileTree({ files, onFileClick, onFileEdit, onFileDelete }: Dm
           onFileClick={onFileClick}
           onFileEdit={onFileEdit}
           onFileDelete={onFileDelete}
+          onFileDeploy={onFileDeploy}
           level={0}
         />
       ))}
@@ -69,6 +71,7 @@ export function DmlFileTree({ files, onFileClick, onFileEdit, onFileDelete }: Dm
           onFileClick={onFileClick}
           onFileEdit={onFileEdit}
           onFileDelete={onFileDelete}
+          onFileDeploy={onFileDeploy}
           level={0}
         />
       ))}
@@ -81,10 +84,11 @@ interface TreeNodeComponentProps {
   onFileClick: (filename: string) => void;
   onFileEdit?: (filename: string) => void;
   onFileDelete?: (filename: string) => void;
+  onFileDeploy?: (filename: string) => void;
   level: number;
 }
 
-function TreeNodeComponent({ node, onFileClick, onFileEdit, onFileDelete, level }: TreeNodeComponentProps) {
+function TreeNodeComponent({ node, onFileClick, onFileEdit, onFileDelete, onFileDeploy, level }: TreeNodeComponentProps) {
   const [isExpanded, setIsExpanded] = useState(false); // All folders collapsed by default
   const isLearnedFolder = node.name === 'learned';
 
@@ -124,6 +128,7 @@ function TreeNodeComponent({ node, onFileClick, onFileEdit, onFileDelete, level 
               onFileClick={onFileClick}
               onFileEdit={onFileEdit}
               onFileDelete={onFileDelete}
+              onFileDeploy={onFileDeploy}
               level={level + 1}
             />
           ))}
@@ -134,6 +139,7 @@ function TreeNodeComponent({ node, onFileClick, onFileEdit, onFileDelete, level 
               onFileClick={onFileClick}
               onFileEdit={onFileEdit}
               onFileDelete={onFileDelete}
+              onFileDeploy={onFileDeploy}
               level={level + 1}
             />
           ))}
@@ -148,10 +154,11 @@ interface FileComponentProps {
   onFileClick: (filename: string) => void;
   onFileEdit?: (filename: string) => void;
   onFileDelete?: (filename: string) => void;
+  onFileDeploy?: (filename: string) => void;
   level: number;
 }
 
-function FileComponent({ file, onFileClick, onFileEdit, onFileDelete, level }: FileComponentProps) {
+function FileComponent({ file, onFileClick, onFileEdit, onFileDelete, onFileDeploy, level }: FileComponentProps) {
   const fileName = file.name.split('.').pop() || file.name;
 
   const handleEdit = (e: React.MouseEvent) => {
@@ -162,6 +169,11 @@ function FileComponent({ file, onFileClick, onFileEdit, onFileDelete, level }: F
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
     onFileDelete?.(file.name);
+  };
+
+  const handleDeploy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFileDeploy?.(file.name);
   };
   
   return (
@@ -183,6 +195,13 @@ function FileComponent({ file, onFileClick, onFileEdit, onFileDelete, level }: F
         )}
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={handleDeploy}
+          className="p-1 hover:bg-bg-primary rounded text-text-secondary hover:text-blue-600 transition-colors"
+          title="Deploy as micro app"
+        >
+          <Rocket className="w-3.5 h-3.5" />
+        </button>
         <button
           onClick={handleEdit}
           className="p-1 hover:bg-bg-primary rounded text-text-secondary hover:text-deepclause-primary transition-colors"

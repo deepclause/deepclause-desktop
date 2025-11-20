@@ -12,7 +12,8 @@ import { getAgentModelConfig, resolveProvider } from '../../config/models.js';
 import { google } from '@ai-sdk/google';
 import { anthropic } from '@ai-sdk/anthropic';
 import { openrouter } from '@openrouter/ai-sdk-provider';
-import { openai } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { openai, createOpenAI } from '@ai-sdk/openai';
 import { analyzeDmlParameters, formatParametersInfo, readDmlFileContents, listDmlFiles } from '../../dml-js/dml-utils.js';
 
 // Configuration - lazily loaded
@@ -33,11 +34,39 @@ function getAgentConfig() {
 
 // Provider adapter map used when resolving models so all providers are supported
 const providerMap = {
-    google: (m) => google(m),
-    openai: (m) => openai(m),
-    anthropic: (m) => anthropic(m),
-    openrouter: (m) => openrouter(m),
+    google: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return google(model);
+    },
+    openai: (m) => {
+
+        console.log(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
+
+        // Accept either a model string or an object { model, baseURL }
+        const model = (m && typeof m === 'object') ? m.name : m;
+        const base = process.env.OPENAI_BASE_URL || process.env.OPENAI_BASE || process.env.OPENAI_API_BASE || "";
+        if (base) {
+            // Ensure common env vars are set so the OpenAI adapter picks them up
+            if (!process.env.OPENAI_API_BASE) 
+                process.env.OPENAI_API_BASE = base;
+            if (!process.env.OPENAI_BASE_URL)
+                 process.env.OPENAI_BASE_URL = base;
+        }
+        console.log(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
+        const provider = createOpenAICompatible({name: "provider", baseURL: base, apiKey: process.env.OPENAI_API_KEY});
+        return provider(model)
+    },
+    anthropic: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return anthropic(model);
+    },
+    openrouter: (m) => {
+        const model = (m && typeof m === 'object') ? m.name : m;
+        return openrouter(model);
+    }
 };
+
+
 
 function buildSessionId(prefix) {
     return `${prefix}_${new Date().toISOString().replace(/[:.]/g, '_')}_${crypto.randomBytes(4).toString('hex')}`.replaceAll('-', '_');

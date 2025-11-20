@@ -181,11 +181,18 @@ function create9pHandler(fsRoot) {
     const fids = new Map();
     const openFiles = new Map();
     let msize = 8192;
-    const rootPath = fsRoot;
     
-    log9p("9P filesystem serving directory:", rootPath);
+    // Dynamic workspace resolution: check environment variable on each request
+    // This allows the same 9p handler to serve different session workspaces
+    function getRootPath() {
+        // Priority: 1) env var (set per-session), 2) fsRoot parameter, 3) default
+        return process.env.DML_CLI_WORKSPACE || fsRoot || "./workspace";
+    }
+    
+    log9p("9P filesystem handler created (workspace resolved dynamically)");
     
     function getFullPath(relativePath) {
+        const rootPath = getRootPath();
         if (!relativePath || relativePath === '/') return rootPath;
         const normalized = path.normalize(relativePath).replace(/^\//, '');
         return path.join(rootPath, normalized);
@@ -254,9 +261,10 @@ function create9pHandler(fsRoot) {
                     
                 case P9_TATTACH:
                     const [fid] = unmarshall(['w', 'w', 's', 's', 'w'], reqBuf, state);
-                    log9p(`Attach: fid=${fid}`);
-                    const rootQid = await getFileQid(rootPath, true);
-                    fids.set(fid, { path: '', fullPath: rootPath, qid: rootQid });
+                    const currentRootPath = getRootPath();
+                    log9p(`Attach: fid=${fid}, mounting workspace: ${currentRootPath}`);
+                    const rootQid = await getFileQid(currentRootPath, true);
+                    fids.set(fid, { path: '', fullPath: currentRootPath, qid: rootQid });
                     responseOffset += marshall(['Q'], [rootQid], responseBuf, responseOffset);
                     marshall(['w', 'b', 'h'], [responseOffset, P9_RATTACH, tag], responseBuf, 0);
                     reply(responseBuf.slice(0, responseOffset));
