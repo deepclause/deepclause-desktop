@@ -20,6 +20,7 @@ export function DeploymentDialog({
   const [outputFolder, setOutputFolder] = useState('');
   const [isDeploying, setIsDeploying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeLinuxVM, setIncludeLinuxVM] = useState(false);
 
   // Derive suggested name from DML file
   React.useEffect(() => {
@@ -67,6 +68,7 @@ export function DeploymentDialog({
         deploymentName: deploymentName.trim(),
         outputFolder,
         workspaceDir,
+        includeLinuxVM,
       });
 
       if (result.success) {
@@ -154,6 +156,35 @@ export function DeploymentDialog({
                 Browse
               </button>
             </div>
+          </div>
+
+          {/* Linux VM Option */}
+          <div>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeLinuxVM}
+                onChange={(e) => setIncludeLinuxVM(e.target.checked)}
+                disabled={isDeploying}
+                className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-gray-700">
+                  Include Linux VM Tool (Experimental)
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Bundles the v86 Linux VM image (~50MB) for bash command execution.
+                  Only enable if your DML file uses the Linux VM tool.
+                </div>
+                {includeLinuxVM && (
+                  <div className="mt-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded">
+                    <p className="text-xs text-yellow-800 font-medium">
+                      ⚠️ Warning: This is experimental and significantly increases deployment size.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </label>
           </div>
 
           {/* Error Message */}

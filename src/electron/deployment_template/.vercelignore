@@ -1,0 +1,50 @@
+# Vercel ignore file - excludes files from deployment
+
+# Development
+node_modules
+.git
+.gitignore
+.vscode
+.idea
+
+# Build artifacts (will be rebuilt)
+.cache
+
+# Documentation (keep README.md)
+DEPLOYMENT.md
+docs/
+
+# Testing
+*.test.js
+*.spec.js
+coverage
+
+# Docker-specific files (not needed for Vercel)
+Dockerfile
+docker-compose.yml
+.dockerignore
+nginx.conf
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# NOTE: Do NOT ignore server/** - it contains:
+# - index.js (Express server/API endpoints)
+# - runtime/ (DML runtime with mi.qsave, dml-core, dml-js)
+# - vendor/ (swipl-wasm and other dependencies)
+# All are required for DML execution to work!

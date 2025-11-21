@@ -28,6 +28,11 @@ export interface ExecutionResult {
   output: string;
   status: 'running' | 'completed' | 'error';
   duration?: number;
+  workspaceFiles?: Array<{
+    name: string;
+    size: number;
+    modified: Date;
+  }>;
 }
 
 function App() {
@@ -66,6 +71,11 @@ function App() {
   }, []);
 
   const handleExecute = async (parameters: Record<string, any>, files: Record<string, File>) => {
+    if (!dmlMetadata) {
+      console.error('Cannot execute: DML metadata not loaded');
+      return;
+    }
+    
     // Generate session ID using ISO timestamp format (consistent with backend)
     // Remove hyphens, colons, and dots for filesystem compatibility
     const sessionId = `session_${new Date().toISOString().replace(/[:.]/g, '_').replace(/-/g, '_')}`;
@@ -153,37 +163,44 @@ function App() {
         }
 
         const duration = Date.now() - startTime;
+        
+        // Fetch workspace files before completing
+        const workspaceFiles = await fetchWorkspaceFiles(sessionId);
+        
         const completedExecution = {
           ...execution,
           output,
           status: 'completed' as const,
           duration,
+          workspaceFiles,
         };
         
         setCurrentExecution(completedExecution);
         setExecutionHistory(prev => [completedExecution, ...prev.slice(0, config.ui.maxHistoryItems - 1)]);
         
-        // Clean up session workspace after successful execution
-        console.log(`[Session ${sessionId}] Execution completed, cleaning up workspace...`);
-        await cleanupSession(sessionId);
+        // Don't clean up session immediately - user might want to download files
+        console.log(`[Session ${sessionId}] Execution completed. Workspace files available for download.`);
       } else {
         // Non-streaming result
         const result = await response.json();
         const duration = Date.now() - startTime;
+        
+        // Fetch workspace files before completing
+        const workspaceFiles = await fetchWorkspaceFiles(sessionId);
         
         const completedExecution = {
           ...execution,
           output: result.output || '',
           status: 'completed' as const,
           duration,
+          workspaceFiles,
         };
         
         setCurrentExecution(completedExecution);
         setExecutionHistory(prev => [completedExecution, ...prev.slice(0, config.ui.maxHistoryItems - 1)]);
         
-        // Clean up session workspace after successful execution
-        console.log(`[Session ${sessionId}] Execution completed, cleaning up workspace...`);
-        await cleanupSession(sessionId);
+        // Don't clean up session immediately - user might want to download files
+        console.log(`[Session ${sessionId}] Execution completed. Workspace files available for download.`);
       }
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -197,11 +214,36 @@ function App() {
       setCurrentExecution(errorExecution);
       setExecutionHistory(prev => [errorExecution, ...prev.slice(0, config.ui.maxHistoryItems - 1)]);
       
-      // Clean up session workspace even on error
+      // Clean up session on error
       console.log(`[Session ${sessionId}] Execution failed, cleaning up workspace...`);
       await cleanupSession(sessionId);
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  // Helper function to fetch workspace files
+  const fetchWorkspaceFiles = async (sessionId: string) => {
+    try {
+      const response = await fetch(`${config.apiEndpoint}/api/list-files`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`[Session ${sessionId}] Found ${result.files?.length || 0} workspace file(s)`);
+        return result.files || [];
+      } else {
+        console.warn(`[Session ${sessionId}] Failed to fetch workspace files:`, response.statusText);
+        return [];
+      }
+    } catch (error) {
+      console.warn(`[Session ${sessionId}] Error fetching workspace files:`, error);
+      return [];
     }
   };
 

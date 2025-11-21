@@ -91,7 +91,7 @@ export function registerDeploymentHandlers() {
 
   // Handle deployment with custom name (called from renderer with name input)
   ipcMain.handle('deploy-dml-file-with-name', async (event, options) => {
-    const { dmlFilePath, deploymentName, outputFolder, workspaceDir } = options;
+    const { dmlFilePath, deploymentName, outputFolder, workspaceDir, includeLinuxVM } = options;
 
     try {
       if (!dmlFilePath || !deploymentName || !outputFolder || !workspaceDir) {
@@ -120,7 +120,8 @@ export function registerDeploymentHandlers() {
         fullDmlPath,
         deploymentName,
         outputFolder,
-        workspaceDir
+        workspaceDir,
+        includeLinuxVM: includeLinuxVM || false
       });
 
       // Generate the deployment
@@ -129,6 +130,7 @@ export function registerDeploymentHandlers() {
         deploymentName,
         outputFolder,
         workspaceDir,
+        includeLinuxVM: includeLinuxVM || false,
       });
 
       return {

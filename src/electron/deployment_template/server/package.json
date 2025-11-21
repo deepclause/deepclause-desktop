@@ -4,27 +4,11 @@
   "description": "Backend server for {{DEPLOYMENT_NAME}} DML micro app",
   "type": "module",
   "main": "index.js",
+  "private": true,
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "setup": "npm install"
+    "setup": "echo 'Dependencies are installed at root level. Run npm install in project root.'"
   },
-  "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "multer": "^1.4.5-lts.1",
-    "@ai-sdk/anthropic": "^2.0.23",
-    "@ai-sdk/gateway": "^1.0.30",
-    "@ai-sdk/google": "^2.0.15",
-    "@ai-sdk/mistral": "^1.0.11",
-    "@ai-sdk/openai": "^2.0.44",
-    "@ai-sdk/openai-compatible": "^1.0.27",
-    "@openrouter/ai-sdk-provider": "1.2.0",
-    "@modelcontextprotocol/sdk": "^1.18.2",
-    "ai": "5.0.77",
-    "zod": "^3.24.1",
-    "glob": "^11.0.3",
-    "marked": "^15.0.12",
-    "marked-terminal": "^7.3.0"
-  }
+  "dependencies": {}
 }

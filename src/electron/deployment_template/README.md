@@ -28,16 +28,9 @@ This application provides a web interface for:
 
 ### Installation
 
-1. Install frontend dependencies:
+1. Install dependencies (this installs both frontend and backend dependencies):
 ```bash
 npm install
-```
-
-2. Install backend server dependencies:
-```bash
-cd server
-npm install
-cd ..
 ```
 
 ### Running the Application
@@ -48,8 +41,7 @@ The micro app requires both a frontend (React + Vite) and a backend server (Expr
 
 Terminal 1 - Start the backend server:
 ```bash
-cd server
-npm run dev
+npm run dev:server
 ```
 
 Terminal 2 - Start the frontend:
@@ -60,7 +52,7 @@ npm run dev
 **Option 2: Run with a single command (using background process)**
 
 ```bash
-cd server && npm run dev & cd .. && npm run dev
+npm run dev:all
 ```
 
 The application will be available at:
@@ -87,22 +79,186 @@ npm run preview
 
 ## Deployment
 
-### Deploy to Static Hosting
+This application can be deployed in multiple ways depending on your needs:
 
-The built application in `dist/` can be deployed to any static hosting service:
+### 1. Docker Deployment (Recommended for Production)
 
-- **Netlify**: Drag and drop the `dist` folder
-- **Vercel**: Run `vercel --prod` in the project directory
-- **GitHub Pages**: Push the `dist` folder to a `gh-pages` branch
-- **AWS S3**: Upload the `dist` folder contents to an S3 bucket
+Docker provides a containerized, reproducible deployment that works anywhere Docker is available.
 
-### Deploy with Backend
+#### Quick Start with Docker
 
-To use the DML execution backend, you'll need to:
+**Option A: Using Docker Compose (Easiest)**
 
-1. Set up the DML runtime server (see backend setup below)
-2. Configure the API endpoint in `src/config.ts`
-3. Deploy both the frontend and backend
+1. Build and start the application:
+```bash
+npm run docker:compose:up
+```
+
+2. Access the application:
+   - **Frontend + API**: http://localhost (via Nginx)
+   - **Direct API**: http://localhost:3001
+
+3. View logs:
+```bash
+npm run docker:compose:logs
+```
+
+4. Stop the application:
+```bash
+npm run docker:compose:down
+```
+
+**Option B: Using Docker directly**
+
+1. Build the Docker image:
+```bash
+npm run docker:build
+```
+
+2. Run the container:
+```bash
+npm run docker:run
+```
+
+Or with environment variables:
+```bash
+docker run -p 3001:3001 \
+  -e OPENAI_API_KEY=your_key_here \
+  -e ANTHROPIC_API_KEY=your_key_here \
+  {{DEPLOYMENT_NAME}}:latest
+```
+
+#### Deploy to Cloud Platforms
+
+**Deploy to AWS ECS/Fargate:**
+```bash
+# Tag and push to ECR
+docker tag {{DEPLOYMENT_NAME}}:latest your-ecr-registry/{{DEPLOYMENT_NAME}}:latest
+docker push your-ecr-registry/{{DEPLOYMENT_NAME}}:latest
+# Then create an ECS service using this image
+```
+
+**Deploy to Google Cloud Run:**
+```bash
+# Tag and push to GCR
+docker tag {{DEPLOYMENT_NAME}}:latest gcr.io/your-project/{{DEPLOYMENT_NAME}}:latest
+docker push gcr.io/your-project/{{DEPLOYMENT_NAME}}:latest
+gcloud run deploy {{DEPLOYMENT_NAME}} --image gcr.io/your-project/{{DEPLOYMENT_NAME}}:latest
+```
+
+**Deploy to Azure Container Instances:**
+```bash
+az container create \
+  --resource-group myResourceGroup \
+  --name {{DEPLOYMENT_NAME}} \
+  --image {{DEPLOYMENT_NAME}}:latest \
+  --dns-name-label {{DEPLOYMENT_NAME}} \
+  --ports 3001
+```
+
+### 2. Vercel Deployment (Serverless)
+
+Vercel provides zero-configuration deployment with automatic HTTPS and global CDN.
+
+#### Prerequisites
+
+Install Vercel CLI:
+```bash
+npm install -g vercel
+```
+
+#### Deploy to Vercel
+
+1. Build the application:
+```bash
+npm run build
+```
+
+2. Deploy to Vercel:
+```bash
+npm run vercel:deploy
+```
+
+Or simply:
+```bash
+vercel --prod
+```
+
+3. Set environment variables in Vercel dashboard:
+   - Go to your project settings
+   - Add environment variables (API keys, etc.)
+   - Redeploy if needed
+
+#### Vercel Configuration
+
+The deployment includes:
+- Static frontend served from CDN
+- Serverless API functions in `/api` directory
+- Automatic HTTPS and custom domains
+- Global edge network
+
+**Note on Vercel Deployment:**
+- Uses single Express server deployed via `@vercel/node`
+- Maximum execution time: 300 seconds
+- Temporary storage in `/tmp` (512MB limit)
+- Cold starts may add latency to first request
+- Automatic HTTPS and CDN distribution
+
+The Vercel deployment uses the same Express server as Docker/VPS deployments, ensuring consistent behavior across all platforms.
+
+### 3. Traditional Hosting
+
+For deployments to VPS, dedicated servers, or traditional hosting:
+
+1. Build the frontend:
+```bash
+npm run build
+```
+
+2. Install and start the backend server:
+```bash
+cd server
+npm install --production
+npm start
+```
+
+3. Serve the `dist/` folder with Nginx, Apache, or any static file server
+
+4. Configure reverse proxy to forward `/api/*` to the backend server
+
+Example Nginx configuration is included in `nginx.conf`.
+
+### Deployment Comparison
+
+| Feature | Docker | Vercel | Traditional VPS |
+|---------|--------|--------|-----------------|
+| **Setup Complexity** | Medium | Easy | Hard |
+| **Scaling** | Manual/Orchestration | Automatic | Manual |
+| **Cost** | Infrastructure cost | Pay per use | Fixed monthly |
+| **Cold Starts** | None | Yes | None |
+| **Max Execution Time** | Unlimited | 300s | Unlimited |
+| **Environment Control** | Full | Limited | Full |
+| **HTTPS** | Manual setup | Automatic | Manual setup |
+| **Best For** | Production apps | Prototypes, demos | Custom requirements |
+
+### Environment Variables
+
+All deployment methods require environment variables for API keys:
+
+**Required:**
+- `OPENAI_API_KEY` - For OpenAI models
+- `ANTHROPIC_API_KEY` - For Claude models
+
+**Optional:**
+- `GOOGLE_API_KEY` - For Google models
+- `MISTRAL_API_KEY` - For Mistral models
+- Other API keys as needed by your DML file
+
+**Setting Environment Variables:**
+
+**Docker:** Add to `docker-compose.yml` or use `-e` flag
+**Vercel:** Set in project settings dashboard
+**Traditional:** Use `.env` file or system environment
 
 ## Backend Setup
 
@@ -136,16 +292,21 @@ This server provides the DML execution API at `http://localhost:3001`
 │   ├── components/          # React components
 │   │   ├── ParameterForm.tsx   # DML parameter input form
 │   │   ├── ResultsViewer.tsx   # DML execution results display
-│   │   └── ExecutionHistory.tsx # History of executions
+│   │   ├── ExecutionHistory.tsx # History of executions
+│   │   └── MermaidDiagram.tsx  # Mermaid diagram renderer
 │   ├── dml/                # DML-related files
 │   │   └── {{DML_FILE_NAME}}   # The deployed DML file
-│   ├── services/           # API services
-│   │   └── dmlExecutor.ts     # DML execution service
 │   ├── App.tsx             # Main application component
 │   ├── main.tsx            # Application entry point
 │   └── config.ts           # Configuration file
-├── server/                 # Optional standalone backend
-│   ├── index.js            # Express server for DML execution
+├── server/                 # Backend server
+│   ├── index.js            # Express server (works for all deployments)
+│   ├── runtime/            # DML runtime files
+│   │   ├── mi.qsave           # Prolog saved state
+│   │   ├── dml-core/          # Core Prolog modules
+│   │   └── dml-js/            # JavaScript bridge
+│   └── vendor/             # Dependencies
+│       └── swipl-wasm/        # WebAssembly Prolog
 │   └── package.json
 ├── public/                 # Static assets
 ├── index.html

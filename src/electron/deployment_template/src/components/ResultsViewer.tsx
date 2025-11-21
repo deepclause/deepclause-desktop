@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { CheckCircle, XCircle, Loader2, Clock } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Clock, Download, File } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import { MermaidDiagram } from './MermaidDiagram';
+import { config as appConfig } from '../config';
 
 interface ExecutionResult {
   id: string;
@@ -11,6 +13,11 @@ interface ExecutionResult {
   output: string;
   status: 'running' | 'completed' | 'error';
   duration?: number;
+  workspaceFiles?: Array<{
+    name: string;
+    size: number;
+    modified: Date;
+  }>;
 }
 
 interface ResultsViewerProps {
@@ -132,10 +139,40 @@ export default function ResultsViewer({ execution, isExecuting }: ResultsViewerP
           className="bg-gray-50 border border-gray-200 rounded-lg p-4 max-h-[600px] overflow-y-auto"
         >
           {execution.output ? (
-            <div className="prose prose-sm max-w-none">
+            <div className="prose prose-sm max-w-none prose-pre:bg-gray-800 prose-pre:text-gray-100 prose-code:text-pink-600">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeRaw]}
+                components={{
+                  code({ inline, className, children, ...props }: any) {
+                    const match = /language-(\w+)/.exec(className || '');
+                    const lang = match ? match[1] : '';
+                    const code = String(children).replace(/\n$/, '');
+
+                    // Handle mermaid diagrams
+                    if (lang === 'mermaid') {
+                      return <MermaidDiagram chart={code} />;
+                    }
+
+                    // Regular code blocks
+                    if (!inline && match) {
+                      return (
+                        <pre className={className}>
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        </pre>
+                      );
+                    }
+
+                    // Inline code
+                    return (
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
               >
                 {execution.output}
               </ReactMarkdown>
@@ -154,6 +191,47 @@ export default function ResultsViewer({ execution, isExecuting }: ResultsViewerP
           )}
         </div>
       </div>
+
+      {/* Workspace Files */}
+      {execution.workspaceFiles && execution.workspaceFiles.length > 0 && (
+        <div className="card">
+          <h4 className="font-semibold text-gray-900 mb-3">Workspace Files</h4>
+          <p className="text-sm text-gray-600 mb-4">
+            Files created during this execution. Click to download.
+          </p>
+          <div className="space-y-2">
+            {execution.workspaceFiles.map((file) => (
+              <a
+                key={file.name}
+                href={`${appConfig.apiEndpoint}/api/download?sessionId=${encodeURIComponent(execution.id)}&filename=${encodeURIComponent(file.name)}`}
+                download={file.name}
+                className="flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors group"
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <File className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {file.name}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {formatFileSize(file.size)} • {new Date(file.modified).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <Download className="w-4 h-4 text-gray-400 group-hover:text-primary-600 flex-shrink-0" />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }

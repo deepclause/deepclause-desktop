@@ -16,10 +16,11 @@ const __dirname = path.dirname(__filename);
  * @param {string} options.deploymentName - Name for the deployment
  * @param {string} options.outputFolder - Folder where deployment will be created
  * @param {string} options.workspaceDir - Workspace directory with mi.qsave
+ * @param {boolean} options.includeLinuxVM - Whether to include Linux VM tool (default: false)
  * @returns {Promise<string>} Path to the created deployment
  */
 export async function generateDeployment(options) {
-  const { dmlFilePath, deploymentName, outputFolder, workspaceDir } = options;
+  const { dmlFilePath, deploymentName, outputFolder, workspaceDir, includeLinuxVM = false } = options;
 
   // Validate inputs
   if (!dmlFilePath || !deploymentName || !outputFolder) {
@@ -73,10 +74,10 @@ export async function generateDeployment(options) {
   });
 
   // 4. Copy DML runtime dependencies
-  await copyDmlDependencies(deploymentPath, workspaceDir);
+  await copyDmlDependencies(deploymentPath, workspaceDir, includeLinuxVM);
 
   // 4b. Copy user settings and capture env vars
-  await copyUserSettings(deploymentPath);
+  await copyUserSettings(deploymentPath, includeLinuxVM);
 
   // 5. Copy DML file to deployment
   const dmlDestPath = path.join(deploymentPath, 'src', 'dml', dmlFileName);
@@ -100,10 +101,16 @@ export async function generateDeployment(options) {
   const filesToProcess = [
     'package.json',
     'README.md',
+    'DEPLOYMENT.md',
+    'QUICKSTART.md',
     'index.html',
     'src/App.tsx',
     'src/config.ts',
     'server/package.json',
+    'docker-compose.yml',
+    'nginx.conf',
+    'Dockerfile',
+    'vercel.json',
   ];
 
   for (const file of filesToProcess) {
@@ -125,20 +132,37 @@ export async function generateDeployment(options) {
   await createServerWorkspaceSetup(deploymentPath);
 
   // 9. Update server to use correct paths
-  await updateServerPaths(deploymentPath);
+  // NOTE: Disabled - server/index.js is now maintained in the template
+  // The template has the complete, up-to-date server code
+  // await updateServerPaths(deploymentPath);
+
+  // 10. Fix v86 import paths in runtime/dml-js/tools.js
+  await fixV86ImportPaths(deploymentPath);
 
   console.log(`[Deployment] ✅ Deployment created successfully at: ${deploymentPath}`);
-  console.log(`[Deployment] Next steps:`);
-  console.log(`[Deployment]   cd ${deploymentPath}`);
-  console.log(`[Deployment]   npm install`);
-  console.log(`[Deployment]   cd server && npm install && cd ..`);
-  console.log(`[Deployment]   `);
-  console.log(`[Deployment] Then run with TWO terminals:`);
-  console.log(`[Deployment]   Terminal 1: cd server && npm run dev`);
-  console.log(`[Deployment]   Terminal 2: npm run dev`);
-  console.log(`[Deployment]   `);
-  console.log(`[Deployment] Or run both at once:`);
-  console.log(`[Deployment]   npm run dev:all`);
+  console.log(`[Deployment] `);
+  console.log(`[Deployment] 📚 Quick Start Options:`);
+  console.log(`[Deployment] `);
+  console.log(`[Deployment] 1️⃣  Docker (Recommended for Production):`);
+  console.log(`[Deployment]     cd ${deploymentPath}`);
+  console.log(`[Deployment]     npm run docker:compose:up`);
+  console.log(`[Deployment]     → Access at http://localhost`);
+  console.log(`[Deployment] `);
+  console.log(`[Deployment] 2️⃣  Vercel (Fastest Deployment):`);
+  console.log(`[Deployment]     cd ${deploymentPath}`);
+  console.log(`[Deployment]     npm run build`);
+  console.log(`[Deployment]     vercel --prod`);
+  console.log(`[Deployment] `);
+  console.log(`[Deployment] 3️⃣  Local Development:`);
+  console.log(`[Deployment]     cd ${deploymentPath}`);
+  console.log(`[Deployment]     npm install`);
+  console.log(`[Deployment]     npm run dev:all`);
+  console.log(`[Deployment]     → Access at http://localhost:5173`);
+  console.log(`[Deployment] `);
+  console.log(`[Deployment] 📖 Full documentation:`);
+  console.log(`[Deployment]     - QUICKSTART.md for immediate deployment`);
+  console.log(`[Deployment]     - DEPLOYMENT.md for detailed instructions`);
+  console.log(`[Deployment]     - README.md for complete project info`);
 
   return deploymentPath;
 }
@@ -146,8 +170,9 @@ export async function generateDeployment(options) {
 /**
  * Copy DML runtime dependencies to deployment
  */
-async function copyDmlDependencies(deploymentPath, workspaceDir) {
+async function copyDmlDependencies(deploymentPath, workspaceDir, includeLinuxVM = false) {
   console.log(`[Deployment] Copying DML runtime dependencies...`);
+  console.log(`[Deployment] Linux VM: ${includeLinuxVM ? 'ENABLED (experimental)' : 'DISABLED'}`);
 
   const resourcesPath = global.appPaths?.resources || path.join(__dirname, '../../..');
 
@@ -198,20 +223,29 @@ async function copyDmlDependencies(deploymentPath, workspaceDir) {
     console.log(`[Deployment] ✓ Copied swipl-wasm`);
   }
 
-  // 6. Copy vendor/v86 completely (including images)
+  // 5b. Copy vendor/v86 to runtime/vendor (without images - always for code structure)
   const v86Src = path.join(resourcesPath, 'vendor', 'v86');
-  const v86Dest = path.join(deploymentPath, 'server', 'runtime', 'vendor', 'v86');
-  
+  const v86RuntimeDest = path.join(deploymentPath, 'server', 'runtime', 'vendor', 'v86');
   if (fs.existsSync(v86Src)) {
-    copyDirectoryRecursive(v86Src, v86Dest);
-    console.log(`[Deployment] ✓ Copied v86 (including images)`);
+    fs.mkdirSync(v86RuntimeDest, { recursive: true });
+    copyDirectoryRecursive(v86Src, v86RuntimeDest, {
+      exclude: ['images', '*.img', '*.iso', '*.bin'],
+    });
+    console.log(`[Deployment] ✓ Copied v86 code to runtime/vendor (without images)`);
   }
 
-  // Also copy v86 into server/vendor for modules that import from /server/vendor
-  const v86VendorDest = path.join(deploymentPath, 'server', 'vendor', 'v86');
-  if (fs.existsSync(v86Src)) {
-    copyDirectoryRecursive(v86Src, v86VendorDest);
-    console.log(`[Deployment] ✓ Copied v86 to server/vendor/v86`);
+  // 6. Copy vendor/v86 to server/vendor (conditionally with images - only if includeLinuxVM is true)
+  if (includeLinuxVM) {
+    console.log(`[Deployment] ⚠️  Including Linux VM tool (experimental, ~50MB)...`);
+    
+    const v86VendorDest = path.join(deploymentPath, 'server', 'vendor', 'v86');
+    if (fs.existsSync(v86Src)) {
+      copyDirectoryRecursive(v86Src, v86VendorDest);
+      console.log(`[Deployment] ✓ Copied v86 to server/vendor/v86 (with images)`);
+    }
+  } else {
+    console.log(`[Deployment] ⊗ Skipping Linux VM tool (not requested)`);
+    console.log(`[Deployment]   → To enable: Check "Include Linux VM Tool" in deployment dialog`);
   }
 
   console.log(`[Deployment] ✅ All dependencies copied`);
@@ -232,7 +266,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Session-based workspace management
-const WORKSPACES_DIR = path.join(__dirname, 'workspaces');
+// Use /tmp in Vercel (detected by VERCEL_ENV or AWS_LAMBDA_FUNCTION_NAME), workspaces folder otherwise
+const isVercel = process.env.VERCEL_ENV || process.env.AWS_LAMBDA_FUNCTION_NAME;
+const WORKSPACES_DIR = isVercel
+  ? '/tmp' 
+  : (process.env.USER_WORKSPACES || path.join(__dirname, 'workspaces'));
 const SESSION_TIMEOUT = 3600000; // 1 hour in milliseconds
 
 // Track active sessions
@@ -244,6 +282,9 @@ const activeSessions = new Map();
  * @returns {string} Path to the session workspace
  */
 export function getSessionWorkspace(sessionId) {
+  // Ensure workspaces directory is initialized
+  ensureWorkspacesDir();
+  
   if (!sessionId) {
     sessionId = crypto.randomBytes(16).toString('hex');
   }
@@ -312,15 +353,32 @@ export function cleanupSession(sessionId) {
   }
 }
 
-// Run cleanup periodically
-setInterval(cleanupExpiredSessions, 300000); // Every 5 minutes
+// Run cleanup periodically (only if not in Vercel serverless)
+if (!isVercel) {
+  setInterval(cleanupExpiredSessions, 300000); // Every 5 minutes
+}
 
-// Ensure workspaces directory exists
-fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
-
-console.log(\`[Workspace] Session workspace system initialized\`);
-console.log(\`[Workspace] Base directory: \${WORKSPACES_DIR}\`);
-console.log(\`[Workspace] Session timeout: \${SESSION_TIMEOUT / 1000}s\`);
+// Ensure workspaces directory exists (lazy - only when first accessed)
+let workspacesDirInitialized = false;
+function ensureWorkspacesDir() {
+  if (!workspacesDirInitialized) {
+    try {
+      fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
+      workspacesDirInitialized = true;
+      console.log(\`[Workspace] Session workspace system initialized\`);
+      console.log(\`[Workspace] Base directory: \${WORKSPACES_DIR}\`);
+      console.log(\`[Workspace] Session timeout: \${SESSION_TIMEOUT / 1000}s\`);
+    } catch (error) {
+      // In read-only environments like Vercel, this is OK - /tmp is already available
+      if (isVercel) {
+        workspacesDirInitialized = true;
+        console.log(\`[Workspace] Using Vercel /tmp directory\`);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
 `;
 
   fs.writeFileSync(workspaceSetupPath, workspaceSetup, 'utf-8');
@@ -759,6 +817,33 @@ Press Ctrl+C to stop
 }
 
 /**
+ * Fix v86 import paths in runtime files for deployment
+ */
+async function fixV86ImportPaths(deploymentPath) {
+  console.log(`[Deployment] Fixing v86 import paths...`);
+  
+  const toolsJsPath = path.join(deploymentPath, 'server', 'runtime', 'dml-js', 'tools.js');
+  
+  if (!fs.existsSync(toolsJsPath)) {
+    console.warn(`[Deployment] ⚠ tools.js not found at ${toolsJsPath}`);
+    return;
+  }
+
+  let content = fs.readFileSync(toolsJsPath, 'utf-8');
+  
+  // Fix the v86 import path
+  // From: import { V86 } from "../../vendor/v86/build/libv86.mjs";
+  // To:   import { V86 } from "../vendor/v86/build/libv86.mjs";
+  content = content.replace(
+    /from\s+["']\.\.\/\.\.\/vendor\/v86\//g,
+    'from "../vendor/v86/'
+  );
+  
+  fs.writeFileSync(toolsJsPath, content, 'utf-8');
+  console.log(`[Deployment] ✓ Fixed v86 import paths in tools.js`);
+}
+
+/**
  * Recursively copy directory
  */
 function copyDirectoryRecursive(source, destination, options = {}) {
@@ -810,7 +895,7 @@ function formatParametersMarkdown(parameters) {
 /**
  * Copy user settings to deployment (no environment variable capturing)
  */
-async function copyUserSettings(deploymentPath) {
+async function copyUserSettings(deploymentPath, includeLinuxVM = false) {
   console.log(`[Deployment] Copying user settings...`);
   
   let config = {};
@@ -836,6 +921,17 @@ async function copyUserSettings(deploymentPath) {
     }
   } else {
     console.log(`[Deployment] No settings.json found - deployment will use empty settings`);
+  }
+  
+  // 2. Disable Linux VM tool unless explicitly requested
+  if (!includeLinuxVM) {
+    if (!config.defaultTools) {
+      config.defaultTools = {};
+    }
+    config.defaultTools.linux_vm = false;
+    console.log(`[Deployment] ✓ Disabled Linux VM tool in settings`);
+  } else {
+    console.log(`[Deployment] ⚠️  Linux VM tool enabled (experimental)`);
   }
   
   // Write to deployment
