@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DeepClause — Block-Text Editor Mockup</title>
+  <style>
+    :root{
+      --bg:#0f1724; --panel:#0b1220; --muted:#9aa4b2; --accent:#7dd3fc; --card:#0f1728; --glass: rgba(255,255,255,0.03);
+      --success:#10b981; --danger:#ef4444; --mono:SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+    }
+    html,body{height:100%;margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:#e6eef6;background:linear-gradient(180deg,#071028 0%, #041028 100%);}    
+    .app{display:flex;height:100vh;gap:18px;padding:20px}
+    .left{width:62%;display:flex;flex-direction:column;gap:12px}
+    .right{width:38%;display:flex;flex-direction:column;gap:12px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--glass);border-radius:10px}
+    .title{display:flex;gap:12px;align-items:center}
+    .title h1{font-size:16px;margin:0}
+    .controls{display:flex;gap:8px}
+    button{background:transparent;color:var(--accent);border:1px solid rgba(125,211,252,0.12);padding:6px 10px;border-radius:8px;cursor:pointer}
+    .canvas{flex:1;overflow:auto;padding:14px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);border-radius:10px}
+    .block{background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));border-radius:8px;padding:10px 12px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.03)}
+    .block .meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .block .meta .tag{font-size:12px;color:var(--muted)}
+    .headline{font-family:var(--mono);font-size:14px;color:#d6eefc;margin:0;padding:6px 0}
+    .body-lines{margin-top:8px;padding-left:8px}
+    .body-line{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,0.01);}
+    .body-line input{flex:1;background:transparent;border:0;outline:none;color:#cfeeff;font-family:var(--mono)}
+    .param-row{display:flex;gap:8px;align-items:center}
+    .param-row input{flex:1;background:transparent;border:0;outline:none;color:#cfeeff}
+
+    .right .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+    .file-list{display:flex;flex-direction:column;gap:6px;max-height:160px;overflow:auto}
+    .file-item{padding:8px;border-radius:8px;color:var(--muted);font-size:13px}
+
+    .console{height:220px;background:#02101a;border-radius:8px;padding:10px;overflow:auto;color:#bfe9ff;font-family:var(--mono);font-size:13px}
+    .console .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+
+    .prompt-block{background:linear-gradient(180deg, rgba(125,211,252,0.03), transparent);border:1px solid rgba(125,211,252,0.08)}
+    .small{font-size:12px;color:var(--muted)}
+
+    .kbd{background:#021827;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.03);font-size:12px;color:#9fcbe9}
+
+    .run-btn{background:linear-gradient(90deg,var(--accent),#60a5fa);border:none;color:#04212b;padding:8px 12px;border-radius:8px}
+
+    .split{display:flex;gap:8px}
+    .hint{color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="left">
+      <div class="topbar">
+        <div class="title">
+          <div style="width:40px;height:40px;border-radius:8px;background:linear-gradient(180deg,#093049,#062032);display:flex;align-items:center;justify-content:center;color:var(--accent)">DC</div>
+          <div>
+            <h1>Block-Text DML Editor — <span class="small">Session: quick-demo.dml</span></h1>
+            <div class="hint">Edit blocks inline — they serialize to DML. Try the prompt block to generate rules.</div>
+          </div>
+        </div>
+        <div class="controls">
+          <button class="kbd">⌘K</button>
+          <button class="kbd">Toggle Sync</button>
+          <button class="run-btn" onclick="runFile()">Run file</button>
+        </div>
+      </div>
+
+      <div class="canvas" id="canvas">
+        <!-- Prompt Block -->
+        <div class="block prompt-block" id="prompt1">
+          <div class="meta"><div class="tag">Prompt</div><div class="small">LLM-assisted</div></div>
+          <div contenteditable class="headline" id="promptText">Generate a DML rule that extracts titles from a webpage and stores them in results.</div>
+          <div style="margin-top:8px;display:flex;gap:8px"><button onclick="generateFromPrompt()">Generate</button><div class="small">Use LLM to create blocks from the prompt</div></div>
+        </div>
+
+        <!-- Param Block -->
+        <div class="block" id="params1">
+          <div class="meta"><div class="tag">Params</div><div class="small">editable</div></div>
+          <div class="param-row"><input value="timeout: number = 5000" /></div>
+          <div class="param-row"><input value="max_results: number = 10" /></div>
+        </div>
+
+        <!-- Rule Block -->
+        <div class="block" id="rule1">
+          <div class="meta"><div class="tag">Rule</div><div><button onclick="runRule('rule1')">Run</button></div></div>
+          <div class="headline">extract_titles(URL, Results) :-</div>
+          <div class="body-lines">
+            <div class="body-line"><div class="small">1</div><input value="fetch_page(URL, Html)" /></div>
+            <div class="body-line"><div class="small">2</div><input value="find_all(Html, 'h1', Titles)" /></div>
+            <div class="body-line"><div class="small">3</div><input value="map_titles(Titles, Results)" /></div>
+          </div>
+        </div>
+
+        <!-- Fact Block -->
+        <div class="block" id="fact1">
+          <div class="meta"><div class="tag">Fact</div><div class="small">static</div></div>
+          <div class="headline">site(homepage('https://example.com')).</div>
+        </div>
+
+        <!-- Query / Example Block -->
+        <div class="block" id="query1">
+          <div class="meta"><div class="tag">Query</div><div class="small">runnable</div></div>
+          <div class="headline">?- extract_titles('https://example.com', R).</div>
+          <div style="margin-top:8px"><button onclick="runQuery('query1')">Run Query</button></div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Files</strong><span class="small">workspace / dml_examples</span></div>
+        <div class="file-list">
+          <div class="file-item">hello.dml</div>
+          <div class="file-item">extractor.dml</div>
+          <div class="file-item">browser/find_links.dml</div>
+          <div class="file-item">learned/my_generated.dml</div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px"><button onclick="loadFile()">Open</button><button onclick="saveFile()">Save</button></div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Inspector</strong><span class="small">block details</span></div>
+        <div class="small">Select a block to inspect. Click head or body lines to edit inline.</div>
+        <div style="margin-top:8px"><strong>Selected:</strong> <span id="selected">rule1</span></div>
+        <div style="margin-top:8px" class="hint">Actions: Convert &middot; Duplicate &middot; Tag &middot; Link to file</div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>DML Code</strong><span class="small">serialized view</span></div>
+        <div style="font-family:var(--mono);background:#04121a;padding:8px;border-radius:6px;max-height:160px;overflow:auto;color:#cfeeff;font-size:13px">
+          <pre id="dmlCode" style="margin:0;white-space:pre-wrap">% Extract titles from a webpage
+param(timeout, 'Timeout in ms', 5000).
+param(max_results, 'Max results', 10).
+
+% Fetch and extract titles
+extract_titles(URL, Results) :-
+  fetch_page(URL, Html),
+  find_all(Html, 'h1', Titles),
+  map_titles(Titles, Results).
+
+site(homepage('https://example.com')).
+
+% Example query
+?- extract_titles('https://example.com', R).
+</pre>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px"><button onclick="editCode()">Edit in Code</button><button onclick="copyCode()">Copy</button></div>
+      </div>
+
+      <div class="panel">
+        <div class="console">
+          <div class="bar"><div><strong>Console</strong></div><div><button class="kbd">Stop</button></div></div>
+          <div id="consoleOutput">Ready. Run the file or a block to see streaming output here.</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    function runFile(){
+      const out = document.getElementById('consoleOutput');
+      out.innerHTML += '<div>Running quick-demo.dml ... (simulated)</div>';
+      setTimeout(()=>{ out.innerHTML += '<div style="color:var(--success)">✅ Execution finished. 3 results.</div>' }, 1000);
+    }
+    function runRule(id){ document.getElementById('consoleOutput').innerHTML += '<div>Running '+id+' ...</div>'; }
+    function runQuery(id){ document.getElementById('consoleOutput').innerHTML += '<div>Query started for '+id+' ...</div>'; }
+    function loadFile(){ alert('Open file (placeholder)') }
+    function saveFile(){ alert('Save file (placeholder)') }
+    function generateFromPrompt(){
+      const p = document.getElementById('promptText').innerText;
+      const out = document.getElementById('consoleOutput');
+      out.innerHTML += '<div>Generating DML from prompt: "'+p+'"</div>';
+      // simulate insertion
+      setTimeout(()=>{
+        const canvas = document.getElementById('canvas');
+        const newBlock = document.createElement('div');
+        newBlock.className='block';
+        newBlock.innerHTML = `<div class="meta"><div class="tag">Rule (auto)</div><div class="small">generated</div></div><div class="headline">auto_rule_generated(A,B) :-</div><div class="body-lines"><div class="body-line"><div class="small">1</div><input value="pred(A)" /></div></div>`;
+        canvas.insertBefore(newBlock, document.getElementById('params1'));
+        out.innerHTML += '<div style="color:var(--accent)">Inserted generated rule</div>';
+      },600);
+    }
+    function editCode(){
+      const code = document.getElementById('dmlCode').innerText;
+      const win = window.open('', '_blank', 'width=800,height=600');
+      win.document.write(`<pre style="font-family:monospace;white-space:pre-wrap;padding:20px;background:#04121a;color:#cfeeff">${code.replace(/</g,'&lt;')}</pre>`);
+    }
+    function copyCode(){
+      const code = document.getElementById('dmlCode').innerText;
+      navigator.clipboard?.writeText(code).then(()=> alert('DML copied to clipboard'));
+    }
+  </script>
+</body>
+</html>

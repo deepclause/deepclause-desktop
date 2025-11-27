@@ -1,0 +1,382 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DML Builder — Tree Editor</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:#0a0e1a;color:#e2e8f0;font-size:14px;padding:0}
+    
+    .container{display:grid;grid-template-columns:420px 1fr;height:100vh}
+    
+    /* Left Panel - Step Builder */
+    .left{background:#0f1419;border-right:1px solid #1e293b;display:flex;flex-direction:column}
+    .header{padding:16px;border-bottom:1px solid #1e293b;background:#141922}
+    .header h1{margin:0;font-size:16px;font-weight:600;color:#f1f5f9}
+    .header p{margin:6px 0 0;font-size:12px;color:#94a3b8}
+    
+    .steps{flex:1;overflow-y:auto;padding:12px}
+    .branch{background:#141922;border:1px solid #1e293b;border-radius:8px;margin-bottom:12px}
+    .branch-header{padding:12px;background:#1a202c;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;cursor:pointer;border-radius:8px 8px 0 0}
+    .branch-header:hover{background:#202633}
+    .branch-title{font-weight:600;color:#cbd5e1;font-size:13px}
+    .branch-badge{background:#334155;color:#94a3b8;padding:2px 8px;border-radius:12px;font-size:11px}
+    
+    .branch-body{padding:12px;display:none}
+    .branch.expanded .branch-body{display:block}
+    .branch.expanded .branch-header{border-radius:8px 8px 0 0}
+    
+    .step{background:#1a202c;border:1px solid #2d3748;border-radius:6px;margin-bottom:8px;padding:10px;cursor:pointer;transition:all 0.15s}
+    .step:hover{border-color:#3b82f6;background:#1e2633}
+    .step.selected{border-color:#3b82f6;box-shadow:0 0 0 1px #3b82f6}
+    .step-num{display:inline-block;background:#334155;color:#cbd5e1;width:20px;height:20px;border-radius:50%;text-align:center;line-height:20px;font-size:11px;font-weight:600;margin-right:8px}
+    .step-desc{font-size:12px;color:#94a3b8;margin-top:4px;line-height:1.4}
+    .step-type{display:inline-block;background:rgba(59,130,246,0.1);color:#60a5fa;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px}
+    
+    .add-btn{background:#1e293b;border:1px dashed #334155;color:#64748b;padding:10px;border-radius:6px;text-align:center;cursor:pointer;font-size:12px;margin-top:8px}
+    .add-btn:hover{background:#2d3748;border-color:#475569;color:#94a3b8}
+    
+    .actions{padding:12px;border-top:1px solid #1e293b;display:flex;gap:8px}
+    button{background:#3b82f6;color:white;border:0;padding:10px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;flex:1}
+    button:hover{background:#2563eb}
+    button.secondary{background:#1e293b;color:#cbd5e1}
+    button.secondary:hover{background:#334155}
+    
+    /* Right Panel - Code Preview */
+    .right{background:#0f1419;display:flex;flex-direction:column}
+    .preview-header{padding:16px;border-bottom:1px solid #1e293b;background:#141922;display:flex;align-items:center;justify-content:space-between}
+    .preview-header h2{margin:0;font-size:14px;font-weight:600;color:#f1f5f9}
+    
+    .tabs{display:flex;gap:2px;background:#0a0e1a;border-radius:6px;padding:2px}
+    .tab{padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;color:#64748b;background:transparent}
+    .tab.active{background:#1e293b;color:#cbd5e1}
+    
+    .preview-content{flex:1;overflow-y:auto;padding:16px}
+    
+    .card{background:#141922;border:1px solid #1e293b;border-radius:8px;padding:16px;margin-bottom:16px}
+    .card h3{margin:0 0 12px;font-size:13px;color:#cbd5e1;font-weight:600}
+    .card-label{font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:6px}
+    .card-content{background:#0a0e1a;border:1px solid #1e293b;border-radius:4px;padding:10px;font-family:monospace;font-size:12px;color:#94a3b8;line-height:1.6}
+    
+    .io-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+    .io-var{background:#0a0e1a;padding:8px;border-radius:4px;border:1px solid #1e293b}
+    .io-var-name{font-family:monospace;color:#60a5fa;font-size:12px;margin-bottom:4px}
+    .io-var-desc{font-size:11px;color:#64748b}
+    
+    pre{margin:0;white-space:pre-wrap;word-wrap:break-word}
+    .code-block{background:#0a0e1a;border:1px solid #1e293b;border-radius:6px;padding:12px;font-family:'Fira Code',monospace;font-size:12px;color:#e2e8f0;line-height:1.5;max-height:400px;overflow:auto}
+    
+    .prompt-box{background:linear-gradient(135deg,#1e3a8a 0%,#1e293b 100%);border:1px solid #3b82f6;border-radius:6px;padding:12px;color:#bfdbfe;font-size:12px;line-height:1.5;margin-bottom:12px}
+    
+    .empty-state{text-align:center;padding:60px 20px;color:#64748b}
+    .empty-state svg{width:64px;height:64px;margin-bottom:16px;opacity:0.5}
+    
+    .badge{display:inline-block;background:rgba(34,197,94,0.1);color:#4ade80;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:600}
+    .badge.llm{background:rgba(168,85,247,0.1);color:#c084fc}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Left Panel: Step Builder -->
+    <div class="left">
+      <div class="header">
+        <h1>🔨 DML Builder</h1>
+        <p>Build your agent step by step</p>
+      </div>
+      
+      <div class="steps" id="stepsContainer">
+        <!-- Branches will be inserted here -->
+      </div>
+      
+      <div class="actions">
+        <button class="secondary" onclick="addBranch()">+ Add Branch</button>
+        <button onclick="generateDML()">Export DML</button>
+      </div>
+    </div>
+    
+    <!-- Right Panel: Preview -->
+    <div class="right">
+      <div class="preview-header">
+        <h2>Step Preview</h2>
+        <div class="tabs">
+          <div class="tab active" onclick="switchTab('visual')">Visual</div>
+          <div class="tab" onclick="switchTab('code')">Generated Code</div>
+        </div>
+      </div>
+      
+      <div class="preview-content" id="previewContent">
+        <div class="empty-state">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <p>Select a step to preview its details</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let branches = [];
+    let selectedStepId = null;
+    let currentTab = 'visual';
+    
+    // Initialize with first branch
+    function init(){
+      addBranch();
+    }
+    
+    function addBranch(){
+      const branchId = Date.now();
+      const branch = {
+        id: branchId,
+        name: `Branch ${branches.length + 1}`,
+        description: branches.length === 0 ? 'Main success path' : 'Fallback strategy',
+        steps: [],
+        expanded: true
+      };
+      branches.push(branch);
+      renderBranches();
+      
+      // Auto-add first step to new branch
+      setTimeout(() => addStepToBranch(branchId), 100);
+    }
+    
+    function toggleBranch(branchId){
+      const branch = branches.find(b => b.id === branchId);
+      branch.expanded = !branch.expanded;
+      renderBranches();
+    }
+    
+    function addStepToBranch(branchId){
+      const branch = branches.find(b => b.id === branchId);
+      const stepNum = branch.steps.length + 1;
+      
+      const description = prompt(`Describe step ${stepNum} in natural language:\n\nExample: "Search the web for the user's topic"`);
+      if(!description) return;
+      
+      // Simulate AI determining step type
+      const isLLM = /extract|analyze|understand|summarize|generate|create|write/i.test(description);
+      
+      const step = {
+        id: Date.now(),
+        branchId,
+        num: stepNum,
+        description,
+        type: isLLM ? '@-predicate' : 'code',
+        generated: generateStepCode(description, isLLM, stepNum)
+      };
+      
+      branch.steps.push(step);
+      renderBranches();
+      selectStep(step.id);
+    }
+    
+    function generateStepCode(desc, isLLM, num){
+      if(isLLM){
+        // Generate @-predicate
+        const predName = `step_${num}_${desc.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0,20)}`;
+        const inputs = ['Input', 'Context'];
+        const output = 'Result';
+        const prompt = `Based on the ${inputs.join(' and ')}, ${desc.toLowerCase()}. Output the result to ${output}.`;
+        
+        return {
+          type: '@-predicate',
+          name: predName,
+          inputs,
+          output,
+          prompt,
+          code: `${predName}(${inputs.join(', ')}, ${output}) :-\n    @("${prompt}").`
+        };
+      } else {
+        // Generate regular code
+        const predName = `step_${num}_${desc.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0,20)}`;
+        return {
+          type: 'code',
+          name: predName,
+          code: `${predName}(Input, Output) :-\n    % ${desc}\n    tool(some_tool(Input), RawResult),\n    process_result(RawResult, Output).`
+        };
+      }
+    }
+    
+    function selectStep(stepId){
+      selectedStepId = stepId;
+      renderBranches();
+      renderPreview();
+    }
+    
+    function deleteStep(stepId){
+      for(const branch of branches){
+        const idx = branch.steps.findIndex(s => s.id === stepId);
+        if(idx !== -1){
+          branch.steps.splice(idx, 1);
+          // Renumber
+          branch.steps.forEach((s, i) => s.num = i + 1);
+          break;
+        }
+      }
+      renderBranches();
+      if(selectedStepId === stepId) selectedStepId = null;
+      renderPreview();
+    }
+    
+    function renderBranches(){
+      const container = document.getElementById('stepsContainer');
+      container.innerHTML = branches.map(branch => `
+        <div class="branch ${branch.expanded ? 'expanded' : ''}">
+          <div class="branch-header" onclick="toggleBranch(${branch.id})">
+            <div>
+              <div class="branch-title">${branch.name}</div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px">${branch.description}</div>
+            </div>
+            <span class="branch-badge">${branch.steps.length} steps</span>
+          </div>
+          <div class="branch-body">
+            ${branch.steps.map(step => `
+              <div class="step ${selectedStepId === step.id ? 'selected' : ''}" onclick="selectStep(${step.id})">
+                <div>
+                  <span class="step-num">${step.num}</span>
+                  <strong style="color:#cbd5e1;font-size:13px">${step.generated.name}</strong>
+                  <span class="step-type">${step.type}</span>
+                  <button onclick="event.stopPropagation();deleteStep(${step.id})" style="float:right;background:transparent;border:0;color:#64748b;padding:2px 6px;font-size:18px;cursor:pointer;line-height:1" title="Delete step">×</button>
+                </div>
+                <div class="step-desc">${step.description}</div>
+              </div>
+            `).join('')}
+            <div class="add-btn" onclick="addStepToBranch(${branch.id})">+ Add Step</div>
+          </div>
+        </div>
+      `).join('');
+    }
+    
+    function renderPreview(){
+      const content = document.getElementById('previewContent');
+      
+      if(!selectedStepId){
+        content.innerHTML = `<div class="empty-state">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <p>Select a step to preview its details</p>
+        </div>`;
+        return;
+      }
+      
+      const step = branches.flatMap(b => b.steps).find(s => s.id === selectedStepId);
+      if(!step) return;
+      
+      if(currentTab === 'visual'){
+        if(step.generated.type === '@-predicate'){
+          content.innerHTML = `
+            <div class="card">
+              <h3><span class="badge llm">LLM-Powered</span> ${step.generated.name}</h3>
+              <div class="card-label">Natural Language Prompt</div>
+              <div class="prompt-box">${step.generated.prompt}</div>
+              
+              <div class="io-grid">
+                <div>
+                  <div class="card-label">Inputs</div>
+                  ${step.generated.inputs.map(inp => `
+                    <div class="io-var">
+                      <div class="io-var-name">${inp}</div>
+                      <div class="io-var-desc">Passed from previous step</div>
+                    </div>
+                  `).join('')}
+                </div>
+                <div>
+                  <div class="card-label">Output</div>
+                  <div class="io-var">
+                    <div class="io-var-name">${step.generated.output}</div>
+                    <div class="io-var-desc">Generated by LLM</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="card">
+              <h3>User Description</h3>
+              <div class="card-content">${step.description}</div>
+            </div>
+          `;
+        } else {
+          content.innerHTML = `
+            <div class="card">
+              <h3><span class="badge">Prolog Logic</span> ${step.generated.name}</h3>
+              <div class="card-label">User Description</div>
+              <div class="card-content">${step.description}</div>
+            </div>
+            
+            <div class="card">
+              <h3>Generated Code</h3>
+              <div class="code-block"><pre>${step.generated.code}</pre></div>
+            </div>
+          `;
+        }
+      } else {
+        content.innerHTML = `
+          <div class="card">
+            <h3>Generated DML Code</h3>
+            <div class="code-block"><pre>${step.generated.code}</pre></div>
+          </div>
+        `;
+      }
+    }
+    
+    function switchTab(tab){
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      renderPreview();
+    }
+    
+    function generateDML(){
+      // Generate full DML file
+      let dml = `% Generated by DML Builder\n\n`;
+      
+      // Generate @-predicates
+      const atPreds = branches.flatMap(b => b.steps.filter(s => s.generated.type === '@-predicate'));
+      if(atPreds.length > 0){
+        dml += `% @-Predicate specifications\n\n`;
+        atPreds.forEach(step => {
+          dml += step.generated.code + '\n\n';
+        });
+      }
+      
+      // Generate helper predicates
+      const helpers = branches.flatMap(b => b.steps.filter(s => s.generated.type === 'code'));
+      if(helpers.length > 0){
+        dml += `% Helper predicates\n\n`;
+        helpers.forEach(step => {
+          dml += step.generated.code + '\n\n';
+        });
+      }
+      
+      // Generate agent_main branches
+      dml += `% Main agent logic\n\n`;
+      branches.forEach((branch, idx) => {
+        dml += `% ${branch.name}: ${branch.description}\n`;
+        dml += `agent_main :-\n`;
+        branch.steps.forEach((step, i) => {
+          const indent = '    ';
+          if(i === 0){
+            dml += `${indent}% ${step.description}\n`;
+            dml += `${indent}${step.generated.name}(Input, Output${step.generated.inputs ? ', ...' : ''}),\n`;
+          } else {
+            dml += `${indent}${step.generated.name}(Output, NextOutput),\n`;
+          }
+        });
+        dml += `    answer("Task completed successfully").\n\n`;
+      });
+      
+      // Show in dialog or download
+      const blob = new Blob([dml], {type: 'text/plain'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'generated_agent.dml';
+      a.click();
+      
+      alert('DML file generated and downloaded!');
+    }
+    
+    // Initialize
+    init();
+  </script>
+</body>
+</html>

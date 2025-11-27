@@ -22,6 +22,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createDmlFile: (filename) => ipcRenderer.invoke('create-dml-file', filename),
   learnDmlFile: (filename) => ipcRenderer.invoke('learn-dml-file', filename),
   
+  // Tree editor operations
+  readTreeJson: (filename) => ipcRenderer.invoke('read-tree-json', filename),
+  generatePromptFromTree: (tree) => ipcRenderer.invoke('generate-prompt-from-tree', tree),
+  compileTreeToDml: (tree) => ipcRenderer.invoke('compile-tree-to-dml', tree),
+  saveDmlWithTree: (filename, content, description, tree) => ipcRenderer.invoke('save-dml-with-tree', filename, content, description, tree),
+  
   // Workspace operations
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   getPaths: () => ipcRenderer.invoke('get-paths'),

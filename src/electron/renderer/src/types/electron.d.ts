@@ -79,6 +79,28 @@ export interface ElectronAPI {
     error?: string;
   }>;
 
+  // Tree editor operations
+  readTreeJson: (filename: string) => Promise<{
+    success: boolean;
+    tree?: any; // DmlTree type
+    error?: string;
+  }>;
+  generatePromptFromTree: (tree: any) => Promise<string>;
+  compileTreeToDml: (tree: any) => Promise<{
+    success: boolean;
+    dml?: string;
+    error?: string;
+  }>;
+  saveDmlWithTree: (
+    filename: string,
+    content: string,
+    description: string,
+    tree: any
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
+
   // Workspace operations
   selectWorkspace: () => Promise<{
     success: boolean;

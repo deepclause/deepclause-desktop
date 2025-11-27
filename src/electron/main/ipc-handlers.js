@@ -851,6 +851,110 @@ export function setupIpcHandlers(workspaceManager) {
     }
   });
 
+  // Read tree.json file for a DML file
+  ipcMain.handle('read-tree-json', async (event, filename) => {
+    try {
+      if (!currentWorkspaceManager) {
+        throw new Error('Workspace manager not initialized');
+      }
+      
+      const treeFilename = `${filename}.tree.json`;
+      const treeFilePath = path.join(currentWorkspaceManager.getWorkspacePath(), treeFilename);
+      
+      // Check if file exists
+      const fs = await import('fs/promises');
+      try {
+        const treeJson = await fs.readFile(treeFilePath, 'utf-8');
+        const tree = JSON.parse(treeJson);
+        return { success: true, tree };
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          // File doesn't exist - not an error, just return null
+          return { success: true, tree: null };
+        }
+        throw err;
+      }
+    } catch (error) {
+      console.error('Error reading tree JSON:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Generate prompt from tree (for display in log view)
+  ipcMain.handle('generate-prompt-from-tree', async (event, tree) => {
+    try {
+      const { treeToStructuredPrompt } = await import('./tree-compiler.js');
+      const prompt = treeToStructuredPrompt(tree);
+      return prompt;
+    } catch (error) {
+      console.error('Error generating prompt from tree:', error);
+      throw error;
+    }
+  });
+
+  // Compile tree to DML
+  ipcMain.handle('compile-tree-to-dml', async (event, tree) => {
+    try {
+      if (!dmlAgent) {
+        throw new Error('Agent not initialized');
+      }
+      
+      const result = await dmlAgent.compileTreeToDml(tree);
+      
+      // Signal end of streaming
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('dml-output-end');
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Error compiling tree to DML:', error);
+      
+      // Signal end of streaming even on error
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('dml-output-end');
+      }
+      
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Save DML file with tree.json
+  ipcMain.handle('save-dml-with-tree', async (event, filename, content, description, tree) => {
+    try {
+      if (!dmlAgent) {
+        throw new Error('Agent not initialized');
+      }
+      
+      // Save the DML file
+      await dmlAgent.saveDmlFileContent(filename, content, description);
+      
+      // Save the tree.json file
+      const fs = await import('fs/promises');
+      const treeFilename = `${filename}.tree.json`;
+      const treeFilePath = path.join(currentWorkspaceManager.getWorkspacePath(), treeFilename);
+      
+      // Update tree metadata
+      if (!tree.metadata) tree.metadata = {};
+      tree.metadata.lastModified = new Date().toISOString();
+      
+      await fs.writeFile(treeFilePath, JSON.stringify(tree, null, 2), 'utf-8');
+      
+      // Trigger file list refresh
+      const mainWindow = BrowserWindow.getAllWindows()[0];
+      if (mainWindow) {
+        mainWindow.webContents.send('refresh-dml-files');
+      }
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error saving DML with tree:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // Cleanup conversation resources (SWIPL instance, etc.)
   ipcMain.handle('cleanup-conversation', async (event, conversationId) => {
     try {

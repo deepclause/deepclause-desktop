@@ -1,0 +1,339 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Deep Research — Program View (Mockup)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#0f172a;color:#e6eef8}
+    .wrap{display:grid;grid-template-columns:340px 1fr 420px;gap:18px;padding:20px}
+    .panel{background:#0b1220;border:1px solid rgba(255,255,255,0.04);padding:14px;border-radius:10px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    h2{margin:0 0 10px 0;font-size:14px;color:#bcd2ff}
+    .muted{color:#98a8c9;font-size:13px}
+    .params li{margin-bottom:8px}
+    .flow{display:flex;flex-direction:column;gap:16px}
+    .step-container{display:flex;align-items:flex-start;gap:12px}
+    .vars{display:flex;flex-direction:column;gap:4px;min-width:120px;font-size:11px}
+    .vars .label{color:#7a92b8;font-weight:600;margin-bottom:2px}
+    .vars .var{background:rgba(59,130,246,0.08);color:#a8c5ff;padding:3px 6px;border-radius:4px;border:1px solid rgba(59,130,246,0.15)}
+    .box{background:linear-gradient(180deg,#0f2338,#071422);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);flex:1;cursor:pointer}
+    .box.selected{outline:2px solid #3b82f6}
+    .box .title{font-weight:600;color:#e6f0ff}
+    .box .desc{font-size:12px;color:#9fb4d8;margin-top:6px}
+    .loop{border-left:3px solid #f59e0b;padding-left:12px;margin-left:8px;background:rgba(245,158,11,0.03)}
+    .loop-label{font-size:12px;color:#fbbf24;font-weight:600;margin-bottom:8px}
+    pre.dml{background:#071026;color:#dfefff;padding:12px;border-radius:6px;overflow:auto;max-height:520px}
+    .meta{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .badge{background:rgba(59,130,246,0.12);color:#bcd2ff;padding:4px 8px;border-radius:999px;font-size:12px}
+    .actions{display:flex;gap:8px;margin-top:12px}
+    button{background:#0b2a44;color:#cfe6ff;border:0;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .sources{font-size:13px}
+    .sources li{margin-bottom:6px}
+    .section-title{font-size:13px;color:#9fb4d8;margin-bottom:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel" id="left">
+      <h2>Program Overview</h2>
+      <div class="muted" id="programDesc">A structured deep research agent: runs searches, builds a report outline, writes a full report with citations, and summarizes it for the user.</div>
+
+      <h2 style="margin-top:16px">Parameters</h2>
+      <ul class="params" id="params"></ul>
+
+      <h2 style="margin-top:14px">Outputs & Files</h2>
+      <div class="muted">Files written by the program and key outputs.</div>
+      <ul id="outputs"></ul>
+
+      <div style="margin-top:14px" class="meta">
+        <span class="badge">Example: deep_research.dml</span>
+        <span class="muted">Static mockup — interactive</span>
+      </div>
+    </div>
+
+    <div class="panel" id="center">
+      <h2>Program Flow & Data</h2>
+      <div class="muted">Step-by-step execution with input/output variables (click to inspect code).</div>
+      <div class="flow" id="flow"></div>
+
+      <h2 style="margin-top:16px">Selected Step — Code</h2>
+      <div class="muted" id="selectedMeta">Select a step to inspect its DML code and description.</div>
+      <pre class="dml" id="code">(select a step)</pre>
+      <div class="actions">
+        <button id="copyBtn">Copy DML</button>
+        <button id="highlightBtn">Highlight in flow</button>
+      </div>
+    </div>
+
+    <div class="panel" id="right">
+      <h2>Sources & Evidence</h2>
+      <div class="muted">URLs, citations and where pieces of information are pulled from.</div>
+      <ol class="sources" id="sourcesList"></ol>
+
+      <h2 style="margin-top:16px">Serialized DML</h2>
+      <div class="muted">Raw program text for reference.</div>
+      <pre class="dml" id="rawDml"></pre>
+    </div>
+  </div>
+
+  </script>
+
+  <!-- Store the DML snapshot in a text/plain script tag to avoid JS template literal escaping issues -->
+  <script id="dml-source" type="text/plain">
+% @-Predicate specifications
+
+% Step 1: Broadly understand the topic
+understand_topic_from_initial_search(InitialSearchResults, Topic, TopicOverview) :-
+  @("Analyze the provided `InitialSearchResults` for the given `Topic`. Synthesize a brief, high-level `TopicOverview` (2-3 sentences) that captures the main concepts, key terms, and general context. This overview will be used to guide further, more specific research.").
+
+% Step 2: Craft targeted search queries
+craft_search_queries(Topic, TopicOverview, SearchQueriesList) :-
+  @("Based on the `Topic` and the `TopicOverview`, generate a list of 3 to 5 specific and targeted search queries. These queries should aim to explore different sub-themes, find supporting data, and uncover expert opinions. The output `SearchQueriesList` must be a Prolog list of strings.").
+
+% Step 3 & 4: Process content, check sufficiency, and generate structure
+process_and_structure_content(AllSearchResults, Topic, ReportStructure, SourcesList) :-
+  @("Analyze `AllSearchResults` related to the `Topic`. First, determine if the information is sufficient for a detailed report. If not, this predicate should fail. If sufficient, extract key information (facts, arguments, data) and associate each piece of information with its source URL. Then, generate a logical `ReportStructure` (an outline) for a comprehensive report. Finally, compile a `SourcesList` of all unique source URLs. The output should be: ReportStructure as a list of section titles (e.g., ['Introduction', 'Key Findings', 'Conclusion']), and SourcesList as a numbered list of terms, e.g., [source(1, 'http://...'), source(2, 'http://...')].").
+
+% Step 5: Write the full report
+write_report_from_structure(ReportStructure, AllSearchResults, SourcesList, Topic, FinalReport) :-
+  @("Using the `ReportStructure` as a guide, write a full, detailed research report on the `Topic`. For each section in the structure, synthesize information from `AllSearchResults`. Crucially, wherever information is used, insert a citation marker `[N]` that corresponds to the correct source in the `SourcesList`. The report must conclude with a 'Sources' section that lists all the sources from the `SourcesList` in a numbered format. The output `FinalReport` should be a single, well-formatted markdown string.").
+
+% Step 6: Summarize the final report
+summarize_final_report(FinalReport, Topic, Summary) :-
+  @("Read the `FinalReport` and create a concise `Summary` (3-4 sentences). The summary should state the main conclusions of the report regarding the `Topic`. This summary will be presented to the user.").
+
+% Helper predicate to write content to a file
+write_to_file(FilePath, Content) :-
+  open(FilePath, write, Stream),
+  format(Stream, Content, []),
+  close(Stream).
+
+% Main agent logic
+
+% Branch 1: Comprehensive success path
+agent_main :-
+  param("topic", "The research topic or question.", Topic),
+  ( Topic \= "" -> true ; (log(error="Topic parameter is missing."), fail) ),
+  log("Starting deep research process for topic: '{Topic}'."),
+
+  % Step 1: Initial web search to understand the topic
+  log("Performing initial web search to understand the topic."),
+  tool(web_search(Topic, num=5), InitialResults),
+  understand_topic_from_initial_search(InitialResults, Topic, TopicOverview),
+
+  % Step 2: Craft and execute specific searches
+  log("Crafting targeted search queries based on initial findings."),
+  craft_search_queries(Topic, TopicOverview, SearchQueries),
+  log("Executing targeted searches: ~w", [SearchQueries]),
+  findall(Result, (member(Query, SearchQueries), tool(web_search(Query, num=10), Result)), AllResultsLists),
+  atomic_list_concat([InitialResults | AllResultsLists], " ", AllResults),
+
+  % Step 3 & 4: Process content, check sufficiency, and create report structure
+  log("Processing all gathered information to structure the report."),
+  process_and_structure_content(AllResults, Topic, ReportStructure, SourcesList),
+  ( ReportStructure \= [] -> log("Content is sufficient. Generated report outline.") ; (log(error="Gathered content was not sufficient for a deep report."), fail) ),
+
+  % Step 5: Write the full report with citations
+  log("Writing the full report, section by section, with citations."),
+  write_report_from_structure(ReportStructure, AllResults, SourcesList, Topic, FinalReport),
+  write_to_file("research_report.md", FinalReport),
+  log("Successfully generated and saved the report to 'research_report.md'."),
+
+  % Step 6: Summarize and present to the user
+  log("Creating a final summary for the user."),
+  summarize_final_report(FinalReport, Topic, Summary),
+
+  end_thinking,
+  system("You are a research assistant presenting your findings."),
+  observation("The user provided the following topic: {Topic}"),
+  observation("I ran an extensive search and generated a report in the file 'research_report.md'"),
+  observation("This is the summary of the report: {Summary}"),
+  chat("Please provide a brief summary of the findings.").
+  </script>
+
+  <script>
+  // Read the DML from the text/plain script tag to avoid escaping issues
+  const deepDml = document.getElementById('dml-source').textContent;
+
+    // Basic parser: extract predicates, args, @-doc strings, params, and detect loops
+    function parseDml(src){
+      const preds = [];
+      const paramRegex = /param\(("|')([^"']+)("|'),\s*("|')([^"']+)("|'),\s*([A-Za-z0-9_]+)\)/g;
+      const paramMatches = [];
+      let m;
+      while((m = paramRegex.exec(src))){
+        paramMatches.push({name:m[2], desc:m[5], var:m[7]});
+      }
+
+      // split blocks by blank line and look for predicate heads, @-docs, and body
+      const blocks = src.split(/\n\s*\n/);
+      for(const b of blocks){
+        const headMatch = b.match(/^([a-zA-Z0-9_]+)\s*\(([^)]*)\)\s*:-/m);
+        const atMatch = b.match(/@\("([\s\S]*?)"\)/m);
+        if(headMatch){
+          const args = headMatch[2].split(',').map(a=>a.trim()).filter(a=>a);
+          // detect loops (findall) - simple check first
+          const hasLoop = /findall\s*\(/i.test(b);
+          let loopInfo = null;
+          if(hasLoop){
+            // Extract the whole findall line for display
+            const findallLine = b.match(/findall\s*\([^\n]+/i);
+            if(findallLine){
+              // Try to extract collector and result variable
+              const simpleMatch = b.match(/findall\s*\(\s*(\w+)\s*,.*,\s*(\w+)\s*\)/i);
+              if(simpleMatch){
+                loopInfo = {
+                  collector: simpleMatch[1],
+                  body: 'member(Query, SearchQueries), tool(web_search(...))',
+                  result: simpleMatch[2],
+                  raw: findallLine[0]
+                };
+              }
+            }
+          }
+          preds.push({
+            name: headMatch[1],
+            args: headMatch[2].trim(),
+            argsList: args,
+            doc: atMatch ? atMatch[1].trim() : '',
+            code: b.trim(),
+            hasLoop,
+            loopInfo
+          });
+        }
+      }
+      return {params:paramMatches, preds};
+    }
+
+    const parsed = parseDml(deepDml);
+
+    // Render params
+    const paramsEl = document.getElementById('params');
+    if(parsed.params.length===0){
+      paramsEl.innerHTML = '<li class="muted">No explicit params parsed (the DML uses param(...) in agent_main at runtime).</li>'
+    } else {
+      parsed.params.forEach(p=>{
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${p.name}</strong>: <span class="muted">${p.desc}</span>`;
+        paramsEl.appendChild(li);
+      });
+    }
+
+    // Render flow boxes in order of appearance with simple roles
+    const flowEl = document.getElementById('flow');
+    const outputsEl = document.getElementById('outputs');
+    const sourcesEl = document.getElementById('sourcesList');
+    const rawEl = document.getElementById('rawDml');
+    const codeEl = document.getElementById('code');
+    const selectedMeta = document.getElementById('selectedMeta');
+
+    rawEl.textContent = deepDml;
+
+    // Heuristics to order steps based on names
+    const orderNames = [
+      'understand_topic_from_initial_search',
+      'craft_search_queries',
+      'process_and_structure_content',
+      'write_report_from_structure',
+      'summarize_final_report',
+      'agent_main'
+    ];
+
+    const ordered = parsed.preds.slice().sort((a,b)=>{
+      const ai = orderNames.indexOf(a.name); const bi = orderNames.indexOf(b.name);
+      if(ai===-1 && bi===-1) return 0;
+      if(ai===-1) return 1; if(bi===-1) return -1; return ai-bi;
+    });
+
+    // Render flow with input/output variables
+    ordered.forEach((p, idx)=>{
+      const container = document.createElement('div');
+      container.className = 'step-container';
+      
+      // Input variables (heuristic: first args are inputs, last is output)
+      const inputs = p.argsList.slice(0, -1);
+      const outputs = p.argsList.slice(-1);
+
+      const inputCol = document.createElement('div');
+      inputCol.className = 'vars';
+      if(inputs.length > 0){
+        inputCol.innerHTML = `<div class="label">Inputs</div>${inputs.map(v=>`<div class="var">${v}</div>`).join('')}`;
+      }
+
+      const box = document.createElement('div');
+      box.className = 'box';
+      box.dataset.name = p.name;
+      
+      let loopBadge = '';
+      if(p.hasLoop){
+        loopBadge = '<span style="background:#f59e0b;color:#000;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px;font-weight:700">LOOP</span>';
+      }
+      
+      box.innerHTML = `<div class="title">${idx+1}. ${p.name}${loopBadge}</div><div class="desc">${(p.doc||'No description available').slice(0,140)}${(p.doc && p.doc.length>140? '...':'')}</div>`;
+      box.addEventListener('click', ()=>selectStep(box, p));
+
+      const outputCol = document.createElement('div');
+      outputCol.className = 'vars';
+      if(outputs.length > 0){
+        outputCol.innerHTML = `<div class="label">Output</div>${outputs.map(v=>`<div class="var">${v}</div>`).join('')}`;
+      }
+
+      container.appendChild(inputCol);
+      container.appendChild(box);
+      container.appendChild(outputCol);
+
+      flowEl.appendChild(container);
+
+      // If this step has a loop, show loop structure in a separate row
+      if(p.hasLoop && p.loopInfo){
+        const loopContainer = document.createElement('div');
+        loopContainer.className = 'loop';
+        loopContainer.innerHTML = `
+          <div class="loop-label">⟳ Loop: findall(${p.loopInfo.collector}, ..., ${p.loopInfo.result})</div>
+          <div style="font-size:12px;color:#cbd5e1;margin-top:4px">
+            Iterates over SearchQueries, executes web_search for each Query, collects Result into <strong style="color:#fbbf24">${p.loopInfo.result}</strong>
+          </div>
+        `;
+        flowEl.appendChild(loopContainer);
+      } else if(p.hasLoop){
+        // Fallback if loopInfo wasn't parsed
+        const loopContainer = document.createElement('div');
+        loopContainer.className = 'loop';
+        loopContainer.innerHTML = `
+          <div class="loop-label">⟳ Loop detected (findall)</div>
+          <div style="font-size:12px;color:#cbd5e1;margin-top:4px">
+            This step contains a findall loop - check the code for details
+          </div>
+        `;
+        flowEl.appendChild(loopContainer);
+      }
+    });
+
+    // Extract outputs and sources heuristically
+    if(/write_to_file\("([^"]+)"/m.test(deepDml)){
+      const w = deepDml.match(/write_to_file\("([^"]+)"/m)[1];
+      const li = document.createElement('li'); li.textContent = w; outputsEl.appendChild(li);
+    }
+    if(/SourcesList/.test(deepDml)){
+      const li = document.createElement('li'); li.textContent = 'SourcesList (compiled from web_search results)'; sourcesEl.appendChild(li);
+    }
+
+    function selectStep(box, pred){
+      // remove selected
+      document.querySelectorAll('.box').forEach(b=>b.classList.remove('selected'));
+      box.classList.add('selected');
+      codeEl.textContent = pred.code;
+      selectedMeta.textContent = `${pred.name}(${pred.args}) — ${pred.doc? pred.doc.split('\n')[0] : 'no @-doc available'}`;
+    }
+
+    // Select first by default
+    const first = document.querySelector('.box'); if(first){ first.click(); }
+
+    document.getElementById('copyBtn').addEventListener('click', ()=>{ navigator.clipboard.writeText(codeEl.textContent); alert('DML copied to clipboard'); });
+    document.getElementById('highlightBtn').addEventListener('click', ()=>{
+      const sel = document.querySelector('.box.selected'); if(!sel) return; sel.scrollIntoView({behavior:'smooth',block:'center'});
+    });
+
+  </script>
+</body>
+</html>

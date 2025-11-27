@@ -1,0 +1,451 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DML Builder — Tree Editor</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    *{box-sizing:border-box}
+    body{font-family:'SF Mono',Monaco,monospace;margin:0;background:#0a0e1a;color:#e2e8f0;font-size:13px;line-height:1.6}
+    
+    .container{max-width:1200px;margin:0 auto;padding:20px}
+    
+    .header{background:#141922;border:1px solid #1e293b;border-radius:8px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between}
+    .header h1{margin:0;font-size:18px;font-weight:600;color:#f1f5f9;font-family:Inter,system-ui,sans-serif}
+    .compile-btn{background:#3b82f6;color:white;border:0;padding:10px 20px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;font-family:Inter,system-ui,sans-serif}
+    .compile-btn:hover{background:#2563eb}
+    
+    .tree{background:#0f1419;border:1px solid #1e293b;border-radius:8px;padding:20px;font-family:'SF Mono',Monaco,Consolas,monospace}
+    
+    .node{margin-left:0;position:relative}
+    .node.nested{margin-left:24px;border-left:1px solid #334155;padding-left:16px}
+    
+    .node-header{display:flex;align-items:flex-start;gap:8px;padding:6px 0;margin-bottom:4px}
+    .node-label{color:#64748b;min-width:80px;font-size:12px;user-select:none}
+    .node-content{flex:1}
+    
+    textarea{
+      background:#1a202c;
+      border:1px solid #2d3748;
+      border-radius:4px;
+      color:#e2e8f0;
+      padding:8px 10px;
+      font-family:'SF Mono',Monaco,Consolas,monospace;
+      font-size:13px;
+      width:100%;
+      resize:vertical;
+      min-height:60px;
+      line-height:1.5
+    }
+    textarea:focus{outline:none;border-color:#3b82f6;background:#1e2633}
+    textarea::placeholder{color:#475569}
+    
+    .add-btn{
+      background:transparent;
+      border:1px dashed #334155;
+      color:#64748b;
+      padding:6px 12px;
+      border-radius:4px;
+      cursor:pointer;
+      font-size:12px;
+      font-family:'SF Mono',Monaco,monospace;
+      margin:4px 0;
+      display:inline-block;
+      transition:all 0.15s
+    }
+    .add-btn:hover{border-color:#3b82f6;color:#3b82f6;background:#1a202c}
+    
+    .delete-btn{
+      background:transparent;
+      border:0;
+      color:#64748b;
+      cursor:pointer;
+      font-size:16px;
+      padding:0 4px;
+      line-height:1;
+      margin-left:8px
+    }
+    .delete-btn:hover{color:#ef4444}
+    
+    .hint{color:#475569;font-size:11px;font-style:italic;margin-top:2px;margin-left:88px}
+    
+    .variable{background:#1e3a8a;color:#93c5fd;padding:2px 4px;border-radius:2px;font-weight:500}
+    
+    .branch-num{color:#f59e0b;font-weight:600;margin-right:4px}
+    .step-num{color:#10b981;font-weight:600;margin-right:4px}
+    
+    .output-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center}
+    .output-modal.show{display:flex}
+    .output-box{background:#0f1419;border:1px solid #1e293b;border-radius:8px;max-width:900px;width:90%;max-height:90vh;overflow:auto;padding:20px}
+    .output-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .output-header h2{margin:0;font-size:16px;color:#f1f5f9;font-family:Inter,system-ui,sans-serif}
+    .close-btn{background:#1e293b;border:0;color:#cbd5e1;padding:6px 12px;border-radius:4px;cursor:pointer;font-family:Inter,system-ui,sans-serif}
+    .close-btn:hover{background:#334155}
+    pre{margin:0;background:#0a0e1a;border:1px solid #1e293b;border-radius:6px;padding:16px;overflow:auto;color:#cbd5e1;font-size:12px;line-height:1.6}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🌳 DML Tree Builder</h1>
+      <button class="compile-btn" onclick="compileDML()">⚡ Compile to DML</button>
+    </div>
+    
+    <div class="tree" id="tree"></div>
+  </div>
+  
+  <div class="output-modal" id="outputModal">
+    <div class="output-box">
+      <div class="output-header">
+        <h2>Generated DML</h2>
+        <button class="close-btn" onclick="closeModal()">Close</button>
+      </div>
+      <pre id="outputCode"></pre>
+      <button class="compile-btn" onclick="downloadDML()" style="margin-top:16px">Download DML File</button>
+    </div>
+  </div>
+
+  <script>
+    // Data model
+    const tree = {
+      type: 'main',
+      branches: [
+        {
+          type: 'branch',
+          id: Date.now(),
+          description: '',
+          steps: []
+        }
+      ]
+    };
+    
+    let generatedDML = '';
+    
+    function addBranch(){
+      tree.branches.push({
+        type: 'branch',
+        id: Date.now(),
+        description: '',
+        steps: []
+      });
+      render();
+    }
+    
+    function deleteBranch(branchId){
+      const idx = tree.branches.findIndex(b => b.id === branchId);
+      if(idx > -1 && tree.branches.length > 1){
+        tree.branches.splice(idx, 1);
+        render();
+      }
+    }
+    
+    function addStep(branchId){
+      const branch = tree.branches.find(b => b.id === branchId);
+      branch.steps.push({
+        type: 'step',
+        id: Date.now(),
+        description: '',
+        branches: []
+      });
+      render();
+    }
+    
+    function deleteStep(branchId, stepId){
+      const branch = tree.branches.find(b => b.id === branchId);
+      const idx = branch.steps.findIndex(s => s.id === stepId);
+      if(idx > -1){
+        branch.steps.splice(idx, 1);
+        render();
+      }
+    }
+    
+    function addStepBranch(branchId, stepId){
+      const branch = tree.branches.find(b => b.id === branchId);
+      const step = branch.steps.find(s => s.id === stepId);
+      step.branches.push({
+        type: 'step-branch',
+        id: Date.now(),
+        description: ''
+      });
+      render();
+    }
+    
+    function deleteStepBranch(branchId, stepId, subBranchId){
+      const branch = tree.branches.find(b => b.id === branchId);
+      const step = branch.steps.find(s => s.id === stepId);
+      const idx = step.branches.findIndex(sb => sb.id === subBranchId);
+      if(idx > -1){
+        step.branches.splice(idx, 1);
+        render();
+      }
+    }
+    
+    function updateBranchDesc(branchId, value){
+      const branch = tree.branches.find(b => b.id === branchId);
+      branch.description = value;
+    }
+    
+    function updateStepDesc(branchId, stepId, value){
+      const branch = tree.branches.find(b => b.id === branchId);
+      const step = branch.steps.find(s => s.id === stepId);
+      step.description = value;
+    }
+    
+    function updateStepBranchDesc(branchId, stepId, subBranchId, value){
+      const branch = tree.branches.find(b => b.id === branchId);
+      const step = branch.steps.find(s => s.id === stepId);
+      const subBranch = step.branches.find(sb => sb.id === subBranchId);
+      subBranch.description = value;
+    }
+    
+    function render(){
+      const container = document.getElementById('tree');
+      
+      let html = '<div class="node"><div class="node-header"><span class="node-label">agent_main</span></div></div>';
+      
+      tree.branches.forEach((branch, bIdx) => {
+        html += `
+          <div class="node nested">
+            <div class="node-header">
+              <span class="node-label"><span class="branch-num">Branch ${bIdx + 1}</span></span>
+              <div class="node-content">
+                <textarea 
+                  placeholder="Describe this branch (e.g., 'Main success path: extract citations from paper')" 
+                  oninput="updateBranchDesc(${branch.id}, this.value)"
+                  rows="2"
+                >${branch.description}</textarea>
+              </div>
+              ${tree.branches.length > 1 ? `<button class="delete-btn" onclick="deleteBranch(${branch.id})" title="Delete branch">×</button>` : ''}
+            </div>
+            <div class="hint">Use @ to mark variables: @Input, @Result, @URL</div>
+        `;
+        
+        branch.steps.forEach((step, sIdx) => {
+          html += `
+            <div class="node nested">
+              <div class="node-header">
+                <span class="node-label"><span class="step-num">Step ${sIdx + 1}</span></span>
+                <div class="node-content">
+                  <textarea 
+                    placeholder="Describe this step (e.g., 'Download paper from @URL to @FilePath')" 
+                    oninput="updateStepDesc(${branch.id}, ${step.id}, this.value)"
+                    rows="2"
+                  >${step.description}</textarea>
+                </div>
+                <button class="delete-btn" onclick="deleteStep(${branch.id}, ${step.id})" title="Delete step">×</button>
+              </div>
+          `;
+          
+          if(step.branches.length > 0){
+            step.branches.forEach((subBranch, sbIdx) => {
+              html += `
+                <div class="node nested">
+                  <div class="node-header">
+                    <span class="node-label"><span class="branch-num">Alt ${sbIdx + 1}</span></span>
+                    <div class="node-content">
+                      <textarea 
+                        placeholder="Alternative approach if step fails" 
+                        oninput="updateStepBranchDesc(${branch.id}, ${step.id}, ${subBranch.id}, this.value)"
+                        rows="2"
+                      >${subBranch.description}</textarea>
+                    </div>
+                    <button class="delete-btn" onclick="deleteStepBranch(${branch.id}, ${step.id}, ${subBranch.id})" title="Delete alternative">×</button>
+                  </div>
+                </div>
+              `;
+            });
+          }
+          
+          html += `
+              <button class="add-btn" onclick="addStepBranch(${branch.id}, ${step.id})">+ Add Alternative</button>
+            </div>
+          `;
+        });
+        
+        html += `
+            <button class="add-btn" onclick="addStep(${branch.id})">+ Add Step</button>
+          </div>
+        `;
+      });
+      
+      html += '<button class="add-btn" style="margin-left:24px" onclick="addBranch()">+ Add Branch</button>';
+      
+      container.innerHTML = html;
+    }
+    
+    function extractVariables(text){
+      const vars = [];
+      const regex = /@(\w+)/g;
+      let match;
+      while((match = regex.exec(text))){
+        if(!vars.includes(match[1])){
+          vars.push(match[1]);
+        }
+      }
+      return vars;
+    }
+    
+    function generatePredicateName(desc){
+      return desc
+        .replace(/@\w+/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .trim()
+        .split(/\s+/)
+        .slice(0, 4)
+        .join('_') || 'step';
+    }
+    
+    function isLLMTask(desc){
+      return /extract|analyze|understand|summarize|generate|create|write|format|convert|determine|identify|find/i.test(desc);
+    }
+    
+    function compileDML(){
+      let dml = '% Generated by DML Tree Builder\n\n';
+      
+      const atPredicates = [];
+      const helpers = [];
+      
+      // Process each branch
+      tree.branches.forEach((branch, bIdx) => {
+        branch.steps.forEach((step, sIdx) => {
+          if(!step.description.trim()) return;
+          
+          const predName = `branch${bIdx + 1}_step${sIdx + 1}_${generatePredicateName(step.description)}`;
+          const vars = extractVariables(step.description);
+          const isLLM = isLLMTask(step.description);
+          
+          if(isLLM){
+            // Generate @-predicate
+            const inputs = vars.slice(0, -1);
+            const output = vars.slice(-1)[0] || 'Result';
+            const prompt = step.description.replace(/@(\w+)/g, '`$1`');
+            
+            atPredicates.push({
+              name: predName,
+              inputs,
+              output,
+              prompt,
+              code: `${predName}(${[...inputs, output].join(', ')}) :-\n    @("${prompt}").`
+            });
+          } else {
+            // Generate regular predicate
+            const allVars = vars.length > 0 ? vars.join(', ') : 'Input, Output';
+            helpers.push({
+              name: predName,
+              code: `${predName}(${allVars}) :-\n    % ${step.description}\n    % TODO: Implement logic here\n    true.`
+            });
+          }
+          
+          // Process step alternatives
+          step.branches.forEach((subBranch, sbIdx) => {
+            if(!subBranch.description.trim()) return;
+            
+            const altPredName = `${predName}_alt${sbIdx + 1}`;
+            const altVars = extractVariables(subBranch.description);
+            const altIsLLM = isLLMTask(subBranch.description);
+            
+            if(altIsLLM){
+              const inputs = altVars.slice(0, -1);
+              const output = altVars.slice(-1)[0] || 'Result';
+              const prompt = subBranch.description.replace(/@(\w+)/g, '`$1`');
+              
+              atPredicates.push({
+                name: altPredName,
+                inputs,
+                output,
+                prompt,
+                code: `${altPredName}(${[...inputs, output].join(', ')}) :-\n    @("${prompt}").`
+              });
+            } else {
+              const allVars = altVars.length > 0 ? altVars.join(', ') : 'Input, Output';
+              helpers.push({
+                name: altPredName,
+                code: `${altPredName}(${allVars}) :-\n    % ${subBranch.description}\n    % TODO: Implement logic here\n    true.`
+              });
+            }
+          });
+        });
+      });
+      
+      // Generate @-predicates section
+      if(atPredicates.length > 0){
+        dml += '% @-Predicate specifications\n\n';
+        atPredicates.forEach(pred => {
+          dml += pred.code + '\n\n';
+        });
+      }
+      
+      // Generate helper predicates section
+      if(helpers.length > 0){
+        dml += '% Helper predicates\n\n';
+        helpers.forEach(helper => {
+          dml += helper.code + '\n\n';
+        });
+      }
+      
+      // Generate agent_main branches
+      dml += '% Main agent logic\n\n';
+      tree.branches.forEach((branch, bIdx) => {
+        if(branch.description.trim()){
+          dml += `% Branch ${bIdx + 1}: ${branch.description.split('\n')[0]}\n`;
+        }
+        dml += 'agent_main :-\n';
+        
+        if(branch.steps.length === 0){
+          dml += '    % No steps defined yet\n';
+          dml += '    answer("Task completed").\n\n';
+        } else {
+          branch.steps.forEach((step, sIdx) => {
+            if(!step.description.trim()) return;
+            
+            const predName = `branch${bIdx + 1}_step${sIdx + 1}_${generatePredicateName(step.description)}`;
+            const vars = extractVariables(step.description);
+            
+            dml += `    % Step ${sIdx + 1}: ${step.description.split('\n')[0]}\n`;
+            
+            if(step.branches.length > 0){
+              // Generate choice point for alternatives
+              dml += `    (\n`;
+              dml += `        ${predName}(${vars.join(', ') || '_'})\n`;
+              step.branches.forEach((subBranch, sbIdx) => {
+                const altPredName = `${predName}_alt${sbIdx + 1}`;
+                const altVars = extractVariables(subBranch.description);
+                dml += `    ;\n        ${altPredName}(${altVars.join(', ') || '_'})\n`;
+              });
+              dml += `    ),\n`;
+            } else {
+              dml += `    ${predName}(${vars.join(', ') || '_'}),\n`;
+            }
+          });
+          
+          dml += '    answer("Task completed successfully").\n\n';
+        }
+      });
+      
+      generatedDML = dml;
+      
+      // Show modal
+      document.getElementById('outputCode').textContent = dml;
+      document.getElementById('outputModal').classList.add('show');
+    }
+    
+    function closeModal(){
+      document.getElementById('outputModal').classList.remove('show');
+    }
+    
+    function downloadDML(){
+      const blob = new Blob([generatedDML], {type: 'text/plain'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'agent.dml';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    
+    // Initial render
+    render();
+  </script>
+</body>
+</html>

@@ -799,6 +799,60 @@ export class DMLAgent {
         return await this.createDml(fileContent);
     }
 
+    /**
+     * Compile tree structure to DML code
+     * @param {object} tree - Tree structure from visual editor
+     * @returns {Promise<object>} Compilation result with success, dml code, or error
+     */
+    async compileTreeToDml(tree) {
+        try {
+            // Import tree compiler
+            const { treeToStructuredPrompt, validateTree } = await import('./tree-compiler.js');
+            
+            // Validate tree structure first
+            const validation = validateTree(tree);
+            if (!validation.valid) {
+                return {
+                    success: false,
+                    error: `Invalid tree structure: ${validation.errors.join(', ')}`
+                };
+            }
+            
+            // Convert tree to structured prompt
+            const prompt = treeToStructuredPrompt(tree);
+            
+            // Stream progress
+            if (this.outputCallback) {
+                this.outputCallback('\n<log>Compiling tree structure to DML...</log>\n\n');
+                this.outputCallback(`<log>Generated prompt from tree structure:</log>\n`);
+                this.outputCallback(`<reasoning>\n${prompt}\n</reasoning>\n\n`);
+            }
+            
+            // Use existing DML generation pipeline
+            const generatedCode = await generateDmlFromPrompt(prompt, this.learnedExamplesDir, this.outputCallback);
+            
+            if (generatedCode && !generatedCode.startsWith('Error')) {
+                this.trackGeneratedDml(generatedCode);
+                return {
+                    success: true,
+                    dml: generatedCode
+                };
+            } else {
+                return {
+                    success: false,
+                    error: generatedCode || 'Failed to generate DML from tree'
+                };
+            }
+            
+        } catch (error) {
+            console.error('Error compiling tree to DML:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
     saveDml(filename) {
         if (!this.lastGeneratedDml) {
             throw new Error("No DML code to save. Generate some DML first.");
@@ -970,8 +1024,46 @@ export class DMLAgent {
 
 % Your DML code here
 `;
-        
+
         fs.writeFileSync(filepath, template);
+
+        // Also create a blank tree.json sidecar so the visual tree editor can be used immediately.
+        try {
+            const nowIso = new Date().toISOString();
+
+            // Sidecar next to the DML file in the examples dir (e.g., dml_examples/.../file.dml.tree.json)
+            const treeSidecarExamplesPath = `${filepath}.tree.json`;
+            if (!fs.existsSync(treeSidecarExamplesPath)) {
+                const emptyTree = {
+                    metadata: { created: nowIso, description: `Auto-generated tree for ${fname}` },
+                    branches: []
+                };
+                fs.writeFileSync(treeSidecarExamplesPath, JSON.stringify(emptyTree, null, 2), 'utf-8');
+            }
+
+            // Workspace sidecar (used by the editor when loading tree data): <workspace>/<filename>.tree.json
+            // Keep the same filename token that the renderer uses when requesting tree JSON
+            const workspaceTreeFilename = `${filename}.tree.json`;
+            const workspaceTreeFilePath = path.join(this.workspacePath, workspaceTreeFilename);
+
+            // Ensure parent dir exists for workspace tree file (in case filename includes path separators)
+            const parentDir = path.dirname(workspaceTreeFilePath);
+            if (!fs.existsSync(parentDir)) {
+                fs.mkdirSync(parentDir, { recursive: true });
+            }
+
+            if (!fs.existsSync(workspaceTreeFilePath)) {
+                const emptyTreeWorkspace = {
+                    metadata: { created: nowIso, source: 'auto-generated', description: `Auto-generated tree for ${filename}` },
+                    branches: []
+                };
+                fs.writeFileSync(workspaceTreeFilePath, JSON.stringify(emptyTreeWorkspace, null, 2), 'utf-8');
+            }
+        } catch (err) {
+            console.warn('Failed to create tree sidecar for new DML file:', err && err.message ? err.message : err);
+            // Non-fatal: continue returning success for DML creation
+        }
+
         return `DML file created: ${filepath}`;
     }
 

@@ -1,0 +1,304 @@
+
+/* Match Message component styling: clean, refined boxes */
+.treeEditor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #FAFAFA;
+  overflow: hidden;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto;
+}
+
+.treeContainer {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  font-size: 14px;
+  background: #FAFAFA;
+}
+
+.treeHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #DDDDDD;
+}
+
+.introText {
+  flex: 1;
+  margin: 0;
+  color: #666666;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.introText strong {
+  font-weight: 600;
+  color: #1A1A1A;
+}
+
+.compileButton {
+  background: #1A1A1A;
+  color: #ffffff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
+}
+
+.compileButton:hover {
+  background: #000000;
+}
+
+.compileButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.node {
+  margin-bottom: 10px;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid #DDDDDD;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 0.2s ease;
+}
+
+.node:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.nodeContent {
+  padding: 12px 16px;
+}
+
+.nested {
+  margin-left: 20px;
+  margin-top: 8px;
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.nodeLabel {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1A1A1A;
+  user-select: none;
+}
+
+.branchNum {
+  color: #666666;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.stepNum {
+  color: #1A1A1A;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.altNum {
+  color: #666666;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.deleteBtn {
+  background: transparent;
+  border: none;
+  color: #999999;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+  margin-left: auto;
+  transition: color 0.2s ease, opacity 0.2s ease;
+  opacity: 0;
+}
+
+.node:hover .deleteBtn {
+  opacity: 1;
+}
+
+.deleteBtn:hover {
+  color: #DC3545;
+}
+
+.textDisplay {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #1A1A1A;
+  padding: 8px 10px;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto;
+  font-size: 14px;
+  width: 100%;
+  min-height: 40px;
+  line-height: 1.5;
+  cursor: text;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.textDisplay:hover {
+  background: #FAFAFA;
+  border-color: #DDDDDD;
+}
+
+.placeholder {
+  color: #999999;
+  font-style: italic;
+}
+
+.alternativesLabel {
+  color: #666666;
+  font-size: 12px;
+  margin: 10px 0 6px 0;
+  font-weight: 500;
+}
+
+.stepAlternatives {
+  margin-top: 10px;
+}
+
+textarea {
+  background: #FAFAFA;
+  border: 1px solid #DDDDDD;
+  border-radius: 8px;
+  color: #1A1A1A;
+  padding: 8px 10px;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto;
+  font-size: 14px;
+  width: 100%;
+  resize: vertical;
+  min-height: 40px;
+  line-height: 1.5;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: #1A1A1A;
+  box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.1);
+  background: #ffffff;
+}
+
+textarea::placeholder {
+  color: #999999;
+}
+
+.addBtn {
+  background: transparent;
+  border: 1px dashed #DDDDDD;
+  color: #666666;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 10px;
+  display: inline-block;
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+
+.node:hover .addBtn,
+.addBtn:hover {
+  opacity: 1;
+}
+
+.addBtn:hover {
+  border-color: #1A1A1A;
+  color: #1A1A1A;
+  background: #F5F5F5;
+}
+
+.deleteBtn {
+  background: transparent;
+  border: none;
+  color: #999999;
+  cursor: pointer;
+  font-size: 20px;
+  padding: 0 6px;
+  line-height: 1;
+  margin-left: auto;
+  transition: color 0.2s ease;
+}
+
+.deleteBtn:hover {
+  color: #DC3545;
+}
+
+.hint {
+  color: #666666;
+  font-size: 11px;
+  margin-top: 6px;
+  margin-bottom: 0;
+  line-height: 1.4;
+}
+
+.variable {
+  background: #E8F5E9;
+  color: #2E7D32;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+}
+
+.textareaWrapper {
+  position: relative;
+  width: 100%;
+}
+
+.suggestions {
+  position: absolute;
+  background: #ffffff;
+  border: 1px solid #DDDDDD;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  min-width: 150px;
+}
+
+.suggestionItem {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  color: #2E7D32;
+  transition: background 0.15s ease;
+}
+
+.suggestionItem:hover {
+  background: #E8F5E9;
+}
+
+.suggestionItem:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.suggestionItem:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
