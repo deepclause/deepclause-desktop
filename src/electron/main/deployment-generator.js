@@ -76,7 +76,7 @@ export async function generateDeployment(options) {
   // 4. Copy DML runtime dependencies
   await copyDmlDependencies(deploymentPath, workspaceDir, includeLinuxVM);
 
-  // 4b. Copy user settings and capture env vars
+  // 4b. Copy user settings but sanitize environment variables
   await copyUserSettings(deploymentPath, includeLinuxVM);
 
   // 5. Copy DML file to deployment
@@ -934,9 +934,34 @@ async function copyUserSettings(deploymentPath, includeLinuxVM = false) {
     console.log(`[Deployment] ⚠️  Linux VM tool enabled (experimental)`);
   }
   
+  // 3. Sanitize API keys and environment variables - replace with empty strings
+  // This ensures the structure is preserved but values must be set via deployment platform
+  if (config.apiKeys) {
+    for (const key in config.apiKeys) {
+      config.apiKeys[key] = '';
+    }
+    console.log(`[Deployment] ✓ Sanitized ${Object.keys(config.apiKeys).length} API keys (set to empty strings)`);
+  }
+  
+  if (config.environmentVariables && Array.isArray(config.environmentVariables)) {
+    config.environmentVariables = config.environmentVariables.map(env => ({
+      ...env,
+      value: ''
+    }));
+    console.log(`[Deployment] ✓ Sanitized ${config.environmentVariables.length} environment variables`);
+  }
+  
+  if (config.environment && typeof config.environment === 'object') {
+    for (const key in config.environment) {
+      config.environment[key] = '';
+    }
+    console.log(`[Deployment] ✓ Sanitized environment object variables`);
+  }
+  
   // Write to deployment
   const configDest = path.join(deploymentPath, 'server', 'runtime', 'config', 'settings.json');
   fs.mkdirSync(path.dirname(configDest), { recursive: true });
   fs.writeFileSync(configDest, JSON.stringify(config, null, 2), 'utf-8');
-  console.log(`[Deployment] ✓ Wrote settings.json to deployment`);
+  console.log(`[Deployment] ✓ Wrote sanitized settings.json to deployment`);
+  console.log(`[Deployment] ℹ  API keys should be set via environment variables in deployment platform`);
 }

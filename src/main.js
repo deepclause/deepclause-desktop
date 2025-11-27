@@ -5,29 +5,41 @@ import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { glob } from 'glob';
 import { globSync } from 'glob';
-import crypto from 'crypto';
-import SWIPL from '../vendor/swipl-wasm/dist/index.js';
 
-import { z } from 'zod';
-import { tool, generateText, streamText, stepCountIs } from 'ai';
-
-import { runDmlAsync, questionToProlog, richPrint, init as initBridge, shutdownMcpClients, getToolsDescription, getGlobalTools } from './dml-js/bridge.js';
-import { getAgentModelConfig, resolveProvider } from './config/models.js';
-import { google } from '@ai-sdk/google';
-import { analyzeDmlParameters, formatParametersInfo, readDmlFileContents, listDmlFiles } from './dml-js/dml-utils.js';
-import { create } from 'domain';
-
-// Configuration (models now configurable via settings.json + env overrides + provider)
-const providerMap = {
-    google: (m) => google(m),
-};
-const agentModelConfig = getAgentModelConfig();
-const { name: AGENT_MODEL, temperature: AGENT_MODEL_TEMP } = agentModelConfig;
+import { richPrint, init as initBridge, shutdownMcpClients } from './dml-js/bridge.js';
+import { DMLAgent } from './electron/main/dml-agent.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Default paths for CLI usage
+const DEFAULT_WORKSPACE = "./workspace";
+const DEFAULT_DML_EXAMPLES = "./dml_examples";
+const DEFAULT_CONFIG = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.deepclause', 'config.json');
+
+// Ensure default directories exist and copy initial files
+if (!fs.existsSync(DEFAULT_WORKSPACE)) {
+    fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
+}
+if (!fs.existsSync(DEFAULT_DML_EXAMPLES)) {
+    fs.mkdirSync(DEFAULT_DML_EXAMPLES, { recursive: true });
+}
+
+// Copy mi.qsave from initial_workspace if it doesn't exist in workspace
+const miQsavePath = path.join(DEFAULT_WORKSPACE, 'mi.qsave');
+if (!fs.existsSync(miQsavePath)) {
+    const sourceMiQsave = path.join(__dirname, 'electron', 'initial_workspace', 'mi.qsave');
+    if (fs.existsSync(sourceMiQsave)) {
+        fs.copyFileSync(sourceMiQsave, miQsavePath);
+        console.log(`Copied mi.qsave to ${miQsavePath}`);
+    } else {
+        console.warn(`Warning: mi.qsave not found at ${sourceMiQsave}. DML execution may not work in production mode.`);
+    }
+}
+
+// Add global flag to track DML execution state
+let isDmlExecuting = false;
 
 function printHeader() {
     console.log("");
@@ -66,389 +78,19 @@ function createConsoleInputCallback(existingRl = null) {
 }
 
 /**
- * Tool: Execute DML code asynchronously
+ * CLI wrapper for DMLAgent - adds interactive terminal features
  */
-async function runDml(dmlCode, parameters = "{}") {
-    try {
-        const paramsDict = safeParseJson(parameters, {});
-        return await runDmlCode(dmlCode, {
-            params: paramsDict,
-            sessionPrefix: 'agent',
-            on_output:  swiplOutputHandler,
-            collect: true,
-            rich: true,
-            echo: true,
-        });
-    } catch (error) {
-        return `Error executing DML: ${error.message}`;
-    }
-}
-
-/**
- * Tool: Generate DML code from a natural language prompt
- */
-async function generateDmlFromPrompt(prompt) {
-    try {
-
-        // Generate DML code
-        let generatedCode = null;
-        let errorMsg = null;
-
-        const swipl = await SWIPL({ 
-            arguments: ["-q"], 
-            on_output: (line) => {} 
-        });
-
-        // Initialize cooperative execution engine using SWIPL
-        const initQuery = `
-            use_module(library(clpfd)),
-            use_module(library(clpr)),
-            use_module(library(readutil)),
-            use_module(library(quasi_quotations)),
-            use_module(library(strings)),
-            use_module(library(lists)).
-        `;
-
-
-        // Initialize cooperative execution engine
-        const initResult = await swipl.prolog.query(initQuery).next();
-
-        if (!initResult || initResult.value.Success == 'false') {
-                const errorMsg = initResult?.value?.Error || 'Unknown initialization error';
-                const msg = `Failed to initialize prolog: ${errorMsg}\n`;
-                return;
-            }
-
-        // Use the questionToProlog function from bridge
-        for await (const result of questionToProlog(prompt, 0, "./dml_examples", swipl, 3)) {
-            if (typeof result === 'object') {
-                if ('code' in result) {
-                    generatedCode = result.code;
-                    break;
-                } else if ('error' in result) {
-                    errorMsg = result.error;
-                }
-            } else if (typeof result === 'string') {
-                // This is intermediate output, we can ignore it for the tool
-                richPrint(result)
-                continue;
-            }
-        }
-
-        if (generatedCode) {
-            return generatedCode;
-        } else if (errorMsg) {
-            return `Error generating DML: ${errorMsg}`;
-        } else {
-            return "Error: No DML code was generated";
-        }
-
-    } catch (error) {
-        return `Error generating DML from prompt: ${error.message}`;
-    }
-}
-
-// DML parameter analysis and formatting are now imported from dml-utils.js
-
-/**
- * Tool: Analyze a DML file
- */
-async function analyzeDmlFile(filename) {
-    try {
-        const { filename: fname, content } = readDmlExample(filename);
-
-        // Extract parameters
-        const parameters = analyzeDmlParameters(content);
-
-        // Basic structure analysis
-        const lines = content.split('\n');
-        const commentLines = lines.filter(line => line.trim().startsWith('%'));
-        const ruleLines = lines.filter(line => line.includes(':-') && !line.trim().startsWith('%'));
-
-        let analysis = `Analysis of ${fname}:\n\n`;
-
-        // File statistics
-        analysis += `File size: ${content.length} characters, ${lines.length} lines\n`;
-        analysis += `Comments: ${commentLines.length} lines\n`;
-        analysis += `Rules: ${ruleLines.length} lines\n\n`;
-
-        // Parameters
-        if (parameters.length > 0) {
-            analysis += "Parameters:\n";
-            for (const param of parameters) {
-                analysis += `  • ${param.key}: ${param.description}\n`;
-            }
-            analysis += "\n";
-        } else {
-            analysis += "Parameters: None defined\n\n";
-        }
-
-        // Main comments (first few comment lines often contain description)
-        if (commentLines.length > 0) {
-            analysis += "Description (from comments):\n";
-            for (let i = 0; i < Math.min(5, commentLines.length); i++) {
-                const cleanLine = commentLines[i].trim().replace(/^%/, '').trim();
-                if (cleanLine) {
-                    analysis += `  ${cleanLine}\n`;
-                }
-            }
-            analysis += "\n";
-        }
-
-        return analysis;
-    } catch (error) {
-        return `Error analyzing DML file: ${error.message}`;
-    }
-}
-
-/**
- * Tool: Read the contents of a DML file
- */
-async function readDmlFile(filename) {
-    try {
-        const { filename: fname, content } = readDmlExample(filename);
-        const parameters = analyzeDmlParameters(content);
-        let result = `Contents of ${fname}:\n${"=".repeat(50)}\n\n`;
-        if (parameters.length > 0) result += formatParametersInfo(parameters) + "\n\n";
-        result += content;
-        return result;
-    } catch (error) {
-        return `Error reading DML file: ${error.message}`;
-    }
-}
-
-/**
- * Tool: Run a DML file from the dml_examples directory
- */
-async function runDmlFileTool(filename, parameters = "{}") {
-    try {
-        const { content } = readDmlExample(filename);
-        const paramsDict = safeParseJson(parameters, {});
-        return await runDmlCode(content, {
-            params: paramsDict,
-            sessionPrefix: 'tool',
-            collect: true,
-            rich: true,
-            echo: true,
-        });
-    } catch (error) {
-        return `Error running DML file: ${error.message}`;
-    }
-}
-
-/**
- * Tool: List all available DML files
- */
-async function listDmlFilesTool() {
-    try {
-        const pattern = path.join(DML_EXAMPLES_DIR, "*.dml");
-        const dmlFiles = glob.sync(pattern);
-
-        if (dmlFiles.length === 0) {
-            return "No DML files found in dml_examples directory";
-        }
-
-        let result = "Available DML files:\n\n";
-        for (const filepath of dmlFiles.sort()) {
-            const filename = path.basename(filepath);
-
-            // Read and analyze the DML file
-            let parameters = [];
-            try {
-                const content = fs.readFileSync(filepath, 'utf-8');
-                parameters = analyzeDmlParameters(content);
-            } catch (error) {
-                // Continue with empty parameters
-            }
-
-            // Look for corresponding description file
-            const descFilename = filename.replace('.dml', '.txt');
-            const descFilepath = path.join(DML_EXAMPLES_DIR, descFilename);
-
-            let description = "";
-            if (fs.existsSync(descFilepath)) {
-                try {
-                    description = fs.readFileSync(descFilepath, 'utf-8').trim();
-                    // Limit description to first line or 100 characters
-                    if (description.includes('\n')) {
-                        description = description.split('\n')[0];
-                    }
-                    if (description.length > 100) {
-                        description = description.substring(0, 97) + "...";
-                    }
-                } catch (error) {
-                    description = `(Error reading description: ${error.message})`;
-                }
-            } else {
-                description = "(No description available)";
-            }
-
-            result += `📄 ${filename}\n`;
-            result += `   Description: ${description}\n`;
-
-            if (parameters.length > 0) {
-                result += `   Parameters:\n`;
-                for (const param of parameters) {
-                    result += `     • ${param.key}: ${param.description}\n`;
-                }
-            } else {
-                result += `   Parameters: None\n`;
-            }
-
-            result += "\n";
-        }
-
-        return result;
-    } catch (error) {
-        return `Error listing DML files: ${error.message}`;
-    }
-}
-
-// ===== Shared constants & helpers (moved up to avoid TDZ issues) =====
-const DML_EXAMPLES_DIR = "./dml_examples";
-const WORKSPACE_DIR = "./workspace";
-
-// Add global flag to track DML execution state
-let isDmlExecuting = false;
-let currentDmlAbortController = null;
-
-function ensureDml(name) {
-    return name.endsWith('.dml') ? name : `${name}.dml`;
-}
-function buildSessionId(prefix) {
-    return `${prefix}_${new Date().toISOString().replace(/[:.]/g, '_')}_${crypto.randomBytes(4).toString('hex')}`.replaceAll('-', '_');
-}
-function safeParseJson(str, fallback = {}) {
-    try { return JSON.parse(str); } catch { return fallback; }
-}
-function swiplOutputHandler(line) {
-    if (process.env.DEBUG) {
-        console.log("SWI-Prolog Output:", line);
-    }
-}
-function readDmlExample(filename) {
-    const fname = ensureDml(filename);
-    const filepath = path.join(DML_EXAMPLES_DIR, fname);
-    if (!fs.existsSync(filepath)) throw new Error(`File not found: ${filepath}`);
-    return { filepath, content: fs.readFileSync(filepath, 'utf-8'), filename: fname };
-}
-async function runDmlCode(dmlCode, {
-    params = {},
-    sessionPrefix = 'session',
-    on_output = swiplOutputHandler,
-    inputCallback = null,
-    collect = true,
-    rich = true,
-    echo = false,
-    memory = [],
-} = {}) {
-    const sessionId = buildSessionId(sessionPrefix);
-    const swipl = await SWIPL({ arguments: ["-q"], on_output });
-    console.log("SWI-Prolog initialized");
-
-    // Track execution state
-    isDmlExecuting = true;
-    currentDmlAbortController = new AbortController();
-
-    // --- new: lightweight spinner for CLI feedback ---
-    const useSpinner = Boolean(process.stdout.isTTY && echo);
-    const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-    let spinnerTimer = null;
-    let spinnerIdx = 0;
-    let spinnerPaused = false;
-
-    function drawSpinner() {
-        if (spinnerPaused) return;
-        const frame = frames[spinnerIdx = (spinnerIdx + 1) % frames.length];
-        try {
-            process.stdout.write(`\r${frame} DML Execution in progress...`);
-        } catch {}
-    }
-    function startSpinner() {
-        if (!useSpinner || spinnerTimer) return;
-        spinnerTimer = setInterval(drawSpinner, 80);
-    }
-    function pauseSpinner() {
-        if (!useSpinner) return;
-        spinnerPaused = true;
-        try {
-            if (process.stdout.clearLine) process.stdout.clearLine(0);
-            if (process.stdout.cursorTo) process.stdout.cursorTo(0);
-        } catch {}
-    }
-    function resumeSpinner() {
-        if (!useSpinner) return;
-        spinnerPaused = false;
-    }
-    function stopSpinner() {
-        if (spinnerTimer) {
-            clearInterval(spinnerTimer);
-            spinnerTimer = null;
-        }
-        if (useSpinner) {
-            try {
-                if (process.stdout.clearLine) process.stdout.clearLine(0);
-                if (process.stdout.cursorTo) process.stdout.cursorTo(0);
-                process.stdout.write('\r');
-            } catch {}
-        }
-    }
-    // --- end spinner ---
-
-    const lines = [];
-    try {
-        startSpinner();
-        for await (const line of runDmlAsync(dmlCode, sessionId, params, WORKSPACE_DIR, swipl, inputCallback, memory)) {
-            // Check if execution was aborted
-            if (currentDmlAbortController.signal.aborted) {
-                stopSpinner();
-                console.log('\n⚠️  DML execution stopped');
-                break;
-            }
-            
-            pauseSpinner(); // Pause before any output
-
-            const isInputPrompt = typeof line === 'string' && line.includes('<input>');
-
-            if (collect) lines.push(line);
-            if (rich && echo) richPrint(line);
-            else if (echo) console.log(line);
-
-            // Do not resume spinner if we are waiting for user input.
-            // The input callback will be awaited inside runDmlAsync in the next iteration.
-            if (!isInputPrompt) {
-                resumeSpinner(); // Resume after output
-            }
-        }
-    } catch (error) {
-        if (!currentDmlAbortController.signal.aborted) {
-            throw error;
-        }
-    } finally {
-        stopSpinner();
-        isDmlExecuting = false;
-        currentDmlAbortController = null;
-    }
-    return collect ? lines.join('') : undefined;
-}
-// ===== End helpers =====
-
-/**
- * DML Agent class
- */
-class DMLAgent {
+class CLIAgent {
     constructor() {
-        this.tools = { runDml, readDmlFile, runDmlFileTool, listDmlFilesTool, analyzeDmlFile, generateDmlFromPrompt };
-        this.lastGeneratedDml = null;
-        this.lastExecutedDml = null;
-        this.lastExecutedDmlFile = null;
-        this.lastExecutedOutput = null;
-        this.dmlExamplesDir = DML_EXAMPLES_DIR;
+        const paths = {
+            workspace: DEFAULT_WORKSPACE,
+            dmlExamples: DEFAULT_DML_EXAMPLES,
+            config: DEFAULT_CONFIG
+        };
 
-        // Ensure dml_examples directory exists
-        if (!fs.existsSync(this.dmlExamplesDir)) {
-            fs.mkdirSync(this.dmlExamplesDir, { recursive: true });
-        }
+        // Create the core DML agent
+        this.agent = new DMLAgent(paths, null, null);
+        this.dmlExamplesDir = DEFAULT_DML_EXAMPLES;
 
         // Setup readline interface
         this.rl = readline.createInterface({
@@ -468,9 +110,9 @@ class DMLAgent {
 
         // Setup global SIGINT handler
         this.rl.on('SIGINT', () => {
-            if (isDmlExecuting && currentDmlAbortController) {
-                console.log('\n\n⚠️  Interrupting DML execution (Ctrl+C)...');
-                currentDmlAbortController.abort();
+            if (isDmlExecuting) {
+                console.log('\n\n⚠️  Interrupting execution (Ctrl+C)...');
+                this.agent.abortExecution();
                 console.log("\n\nPress Ctrl+D to exit, or type '/quit' to exit gracefully.");
                 this.rl.prompt();
             }
@@ -521,9 +163,9 @@ class DMLAgent {
             // Complete DML filenames
             if (parts.length === 1 || (parts.length === 2 && !line.endsWith(' '))) {
                 try {
-                    const dmlFiles = globSync(path.join(this.dmlExamplesDir, "*.dml"));
-                    const filenames = dmlFiles.map(f => path.basename(f));
-                    const baseNames = filenames.map(f => f.replace('.dml', ''));
+                    const dmlFiles = globSync(path.join(this.dmlExamplesDir, "**/*.dml"));
+                    const filenames = dmlFiles.map(f => path.relative(this.dmlExamplesDir, f));
+                    const baseNames = filenames.map(f => f.replace('.dml', '').replace(/[\/\\]/g, '.'));
                     const allNames = [...filenames, ...baseNames];
                     
                     const searchTerm = parts[1] || '';
@@ -572,8 +214,8 @@ The /explain command provides a detailed, non-technical explanation of:
 - What the final result means
 
 Examples:
-- "Search for information about Python" (agent will find and DML files that do some form of search)
-- "Analyze this document" (agent will use any existing analysis like  DML files)
+- "Search for information about Python" (agent will find and use DML files that do some form of search)
+- "Analyze this document" (agent will use any existing analysis DML files)
 - "Extract tables from a webpage" (agent will try to find table extraction DML)
 - "/create a DML that sends emails"
 - "/create:my_prompt.txt" (reads prompt from file)
@@ -592,23 +234,18 @@ Examples:
         }
 
         console.log(`\n🔧 Generating new DML code for: ${description}\n`);
-        //console.log("-".repeat(50));
-
+        
         try {
-            const generatedCode = await generateDmlFromPrompt(description);
+            const generatedCode = await this.agent.createDml(description);
             
-            if (generatedCode && !generatedCode.startsWith('Error')) {
-                console.log("\n✅ DML code generated successfully!");
-                console.log("-".repeat(50));
-                console.log(generatedCode);
-                console.log("-".repeat(50));
-                this.trackGeneratedDml(generatedCode);
-            } else {
-                console.log(`\n❌ ${generatedCode}`);
-            }
+            console.log("\n✅ DML code generated successfully!");
+            console.log("-".repeat(50));
+            console.log(generatedCode);
+            console.log("-".repeat(50));
+            console.log(`💾 DML code tracked (use '/save <filename>' to save)`);
 
         } catch (error) {
-            console.log(`\n❌ Error generating DML: ${error.message}`);
+            console.log(`\n❌ ${error.message}`);
         }
     }
 
@@ -618,349 +255,93 @@ Examples:
             return;
         }
 
-        // Try different possible locations for the file
-        const possiblePaths = [
-            filename,
-            path.join("./workspace", filename),
-            path.join("./dml_examples", filename),
-            path.join(".", filename)
-        ];
-
-        // Add .txt extension if not present and try again
-        if (!filename.endsWith('.txt')) {
-            const txtFilename = filename + '.txt';
-            possiblePaths.push(
-                txtFilename,
-                path.join("./workspace", txtFilename),
-                path.join("./dml_examples", txtFilename),
-                path.join(".", txtFilename)
-            );
+        try {
+            const generatedCode = await this.agent.createDmlFromFile(filename);
+            
+            console.log("\n✅ DML code generated successfully!");
+            console.log("-".repeat(50));
+            console.log(generatedCode);
+            console.log("-".repeat(50));
+            console.log(`💾 DML code tracked (use '/save <filename>' to save)`);
+            
+        } catch (error) {
+            console.log(`❌ ${error.message}`);
         }
-
-        // Try to find and read the file
-        let fileContent = null;
-        let usedPath = null;
-
-        for (const filePath of possiblePaths) {
-            try {
-                if (fs.existsSync(filePath)) {
-                    fileContent = fs.readFileSync(filePath, 'utf-8').trim();
-                    usedPath = filePath;
-                    break;
-                }
-            } catch (error) {
-                continue;
-            }
-        }
-
-        if (fileContent === null) {
-            console.log(`❌ File not found: ${filename}`);
-            console.log("   Searched in: workspace/, dml_examples/, and current directory");
-            console.log("   Tried extensions: .txt");
-            return;
-        }
-
-        if (!fileContent) {
-            console.log(`❌ File is empty: ${usedPath}`);
-            return;
-        }
-
-        console.log(`📖 Reading prompt from: ${usedPath}`);
-        console.log(`📝 Prompt content:`);
-        console.log("-".repeat(50));
-        console.log(fileContent);
-        console.log("-".repeat(50));
-        console.log();
-
-        // Generate DML using the file content as the prompt
-        await this.createDml(fileContent);
     }
 
     saveDml(filename) {
-        if (!this.lastGeneratedDml) {
-            console.log("❌ No DML code to save. Generate some DML first.");
-            return;
-        }
-
-        // Ensure filename has .dml extension
-        if (!filename.endsWith('.dml')) {
-            filename += '.dml';
-        }
-
-        const filepath = path.join(this.dmlExamplesDir, filename);
-
         try {
-            fs.writeFileSync(filepath, this.lastGeneratedDml);
-            console.log(`✅ DML saved to ${filepath}`);
+            const result = this.agent.saveDml(filename);
+            console.log(`✅ ${result}`);
         } catch (error) {
-            console.log(`❌ Error saving DML: ${error.message}`);
+            console.log(`❌ ${error.message}`);
         }
     }
 
     async runDmlFile(filename) {
         try {
-            const { filename: fname, content } = readDmlExample(filename);
-            console.log(`🚀 Running DML file: ${fname}`);
+            console.log(`🚀 Running DML file: ${filename}`);
             console.log("-".repeat(40));
-            const output = await runDmlCode(content, {
-                params: {},
-                sessionPrefix: 'file',
-                on_output: swiplOutputHandler,
-                inputCallback: createConsoleInputCallback(this.rl),
-                collect: true,
-                rich: true,
-                echo: true,
-            });
             
-            // Track execution for /explain command
-            this.lastExecutedDml = content;
-            this.lastExecutedDmlFile = fname;
-            this.lastExecutedOutput = output;
+            isDmlExecuting = true;
+            await this.agent.runDmlFile(filename);
             
             console.log("-".repeat(40));
             console.log("✅ DML execution completed");
         } catch (error) {
             console.log(`❌ Error running DML file: ${error.message}`);
+        } finally {
+            isDmlExecuting = false;
         }
     }
 
     async listDmlFiles() {
         try {
-            const result = await listDmlFilesTool();
+            const result = await this.agent.listDmlFiles();
             console.log(result);
         } catch (error) {
             console.log(`❌ Error listing DML files: ${error.message}`);
         }
     }
 
-    trackGeneratedDml(dmlCode) {
-        this.lastGeneratedDml = dmlCode;
-        console.log(`💾 DML code tracked (use '/save <filename>' to save)`);
-    }
-
     async explainLastExecution() {
-        if (!this.lastExecutedDml || !this.lastExecutedOutput) {
-            console.log('❌ No DML execution to explain. Please run a DML file first using /run <filename>.');
-            return;
-        }
-
         try {
-            console.log('\n🔍 Generating explanation...\n');
-            
-            const dmlFile = this.lastExecutedDmlFile || 'unknown';
-            const dmlCode = this.lastExecutedDml;
-            const output = this.lastExecutedOutput;
-
-            // Truncate if too long to avoid context overflow
-            const MAX_DML_LENGTH = 8000;
-            const MAX_OUTPUT_LENGTH = 8000;
-            const truncatedDml = dmlCode.length > MAX_DML_LENGTH 
-                ? dmlCode.slice(0, MAX_DML_LENGTH) + '\n...[truncated]...'
-                : dmlCode;
-            const truncatedOutput = output.length > MAX_OUTPUT_LENGTH
-                ? output.slice(0, MAX_OUTPUT_LENGTH) + '\n...[truncated]...'
-                : output;
-
-            const explanationPrompt = `You are an expert at explaining technical AI and logic programming concepts to non-technical users.
-
-Your task is to analyze a DML (DeepClause Meta Language) program execution and explain what happened in simple terms that anyone can understand.
-
-**DML File:** ${dmlFile}
-
-**DML Code:**
-\`\`\`prolog
-${truncatedDml}
-\`\`\`
-
-**Execution Output:**
-\`\`\`
-${truncatedOutput}
-\`\`\`
-
-Please provide a clear, non-technical explanation that covers:
-
-1. **What the program was designed to do** - Explain the goal in simple terms
-2. **The execution flow** - Walk through what happened step by step
-3. **Decision points** - Clearly identify and explain:
-   - Decisions made by **symbolic logic** (traditional programming rules, if-then logic, data processing)
-   - Decisions made by **AI/LLM constructs** (calls to language models, natural language understanding, @ predicates that use AI)
-4. **The final result** - What was accomplished and why it matters
-
-Use analogies and simple language. Avoid jargon. When you must use technical terms, explain them.
-Make it engaging and educational for someone who doesn't know programming or AI.
-
-Format your response in clear sections with headers.`;
-
-            const { text: explanation } = await generateText({
-                model: resolveProvider(getAgentModelConfig(), providerMap),
-                prompt: explanationPrompt,
-                maxTokens: 2000,
-                temperature: AGENT_MODEL_TEMP || 0.7,
-            });
-
-            console.log('\n' + '='.repeat(60));
-            console.log('EXECUTION EXPLANATION');
-            console.log('='.repeat(60) + '\n');
-            console.log(explanation);
-            console.log('\n' + '='.repeat(60) + '\n');
-
+            const conversationId = 'cli_session';
+            await this.agent.explainLastExecution(conversationId);
         } catch (error) {
-            console.log(`❌ Error generating explanation: ${error.message}`);
+            console.log(`❌ ${error.message}`);
         }
     }
 
     async processNaturalLanguageInput(input) {
         console.log("\n🤖 Running agent...");
         
-        // Track agent execution state
         isDmlExecuting = true;
-        currentDmlAbortController = new AbortController();
         
         try {
-            const today = new Date().toISOString().split('T')[0];
-            const systemPrompt = [
-                `Today is ${today}.`,
-                'You are a DML (DeepClause Meta Language) assistant and workflow orchestrator.',
-                'Your primary job is to analyze user requests and solve them using existing DML files or creating new ones.',
-                'When you have created a DML file you may also save it for later if it worked well.',
-                'Start by using list_dml_files_tool to see what DML files are available with their parameters.',
-                'Use analyze_dml_file to get detailed information about specific DML files including their parameters.',
-                'Then read the contents of relevant files using read_dml_file to understand what they do.',
-                'Create a plan of which DML files to run and in what order to solve the user\'s request.',
-                'Create a new DML file if neccesary, but keep each DML file\'s purpose focused and simple.',
-                'Execute the plan by running the appropriate DML files using run_dml_file_tool.',
-                'If multiple files are needed, run them in logical sequence.',
-                'When running DML files, you can pass parameters as a JSON object in the params field.',
-                'The DML files use param(Key, Description, Value) predicates to define their parameters.',
-                'Match the parameter keys from the DML analysis to provide the correct parameter values.',
-                'For example: run_dml_file_tool("search.dml", {"query": "Python programming", "max_results": 5})',
-                'Always check what parameters a DML file expects using analyze_dml_file before running it.',
-                //'If no existing DML files can solve the problem, inform the user they should use "/create <description>" to generate new DML.',
-                'Always explain your reasoning and show which DML files you\'re using and why.',
-                'Focus on composing solutions from existing building blocks rather than creating new ones.',
-              
-            ].join('\n');
-
-            const tools = {
-                list_dml_files_tool: tool({
-                    description: "List all available DML files with brief metadata",
-                    inputSchema: z.object({}),
-
-                    execute: async () => ({ listing: await listDmlFilesTool() })
-                }),
-                analyze_dml_file: tool({
-                    description: "Analyze a specific DML file (parameters, comments, structure)",
-                    inputSchema: z.object({ filename: z.string() }),
-                    execute: async ({ filename }) => ({ analysis: await analyzeDmlFile(filename) })
-                }),
-                read_dml_file: tool({
-                    description: "Read full contents of a DML file (truncated if large)",
-                    inputSchema: z.object({ filename: z.string() }),
-                    execute: async ({ filename }) => {
-                        const out = await readDmlFile(filename);
-                        return { content: out.length > 6000 ? out.slice(0,6000) + '\n...[truncated]...' : out };
-                    }
-                }),
-                run_dml_file_tool: tool({
-                    description: "Execute a DML file with optional params object",
-                    inputSchema: z.object({ filename: z.string(), params: z.record(z.any()).optional() }),
-                    execute: async ({ filename, params }) => {
-                        const result = await runDmlFileTool(filename, params ? JSON.stringify(params) : '{}');
-                        
-                        // Track the last executed DML for /explain command
-                        try {
-                            const { content } = readDmlExample(filename);
-                            this.lastExecutedDml = content;
-                            this.lastExecutedDmlFile = filename;
-                            this.lastExecutedOutput = result;
-                        } catch (err) {
-                            // Continue even if tracking fails
-                        }
-                        
-                        return { runOutput: result.length > 8000 ? result.slice(0,8000) + '\n...[truncated]...' : result };
-                    }
-                }),
-                create_dml_from_prompt: tool({
-                    description: "Generate new DML code from a natural language prompt",
-                    inputSchema: z.object({ prompt: z.string() }),
-                    execute: async ({ prompt }) => {
-                        const code = await generateDmlFromPrompt(prompt);
-                        if (code.startsWith('Error')) {
-                            return { code: null, error: code };
-                        }
-                        this.trackGeneratedDml(code);
-                        return { code };
-                    }
-                }),
-                save_last_dml: tool({
-                    description: "Save the last generated DML code to a file in dml_examples directory",
-                    inputSchema: z.object({ filename: z.string() }),
-                    execute: async ({ filename }) => {
-                        if (!this.lastGeneratedDml) {
-                            return { success: false, message: "No DML code to save." };
-                        }
-                        // Ensure filename has .dml extension
-                        if (!filename.endsWith('.dml')) {
-                            filename += '.dml';
-                        }
-                        const filepath = path.join(this.dmlExamplesDir, filename);
-                        try {
-                            fs.writeFileSync(filepath, this.lastGeneratedDml);
-                            return { success: true, message: `DML saved to ${filepath}` };
-                        } catch (error) {
-                            return { success: false, message: `Error saving DML: ${error.message}` };
-                        }
-                    }
-                }),
+            // Create a simple conversation ID for CLI
+            const conversationId = 'cli_session';
+            
+            // Set up output callback to print to console with rich formatting
+            this.agent.outputCallback = (text) => {
+                richPrint(text);
             };
-
-            let result;
-            try {
-                result = await streamText({
-                    model: resolveProvider(agentModelConfig, { google: (m) => google(m) }),
-                    system: systemPrompt,
-                    prompt: `User request:\n${input}`,
-                    stopWhen: stepCountIs(10),
-                    tools,
-                    temperature: AGENT_MODEL_TEMP,
-                    abortSignal: currentDmlAbortController.signal
-                });
-
-                for await (const chunk of result.fullStream) {
-                    // Check if execution was aborted
-                    if (currentDmlAbortController.signal.aborted) {
-                        console.log('\n⚠️  Agent processing stopped');
-                        break;
-                    }
-                    
-                    if (chunk.type === 'text-delta') {
-                        richPrint(chunk.text);
-                    }
-
-                    if (chunk.type === 'tool-call') {
-                        richPrint('\nCalling tool  ' +  chunk.toolName + ' with parameters:\n');
-                        richPrint(JSON.stringify(chunk.input));
-                    }
-
-                    if (chunk.type === 'tool-result') {
-                        richPrint('\nTool result:', chunk.output?.listing || '');
-                    }
-                }
-            } catch (e) {
-                if (currentDmlAbortController.signal.aborted) {
-                    console.log('\n⚠️  Agent processing was interrupted');
-                } else {
-                    richPrint(`❌ Model/tool orchestration failed: ${e.message}`);
-                }
-                return;
-            }
-
-            if (!currentDmlAbortController.signal.aborted) {
-                richPrint("\n\n✅ Agent processing completed.");
-            }
+            
+            // Set up input callback for readline
+            this.agent.inputCallback = createConsoleInputCallback(this.rl);
+            
+            // Build conversation messages array with the current user input
+            const conversationMessages = [
+                { type: 'user', content: input }
+            ];
+            
+            await this.agent.processNaturalLanguageInput(input, conversationId, conversationMessages);
+            
+            console.log("\n\n✅ Agent processing completed.");
+        } catch (error) {
+            console.log(`❌ Error: ${error.message}`);
         } finally {
             isDmlExecuting = false;
-            currentDmlAbortController = null;
         }
     }
 
@@ -974,7 +355,7 @@ Format your response in clear sections with headers.`;
         console.log("Press Ctrl+C during DML execution to stop it, or Ctrl+D to exit.");
         console.log();
         console.log("All available commands:");
-        console.log("- help: Show  help message");
+        console.log("- help: Show help message");
         console.log("- quit/exit: Exit the agent");
         console.log("- /create <description>: Generate new DML code from description");
         console.log("- /create:[filename]: Generate new DML code from prompt stored in a file");
@@ -1011,13 +392,13 @@ Format your response in clear sections with headers.`;
                                 await this.createDmlFromFile(filePart);
                             }
                         } else {
-                          const parts = userInput.split(' ');
-                          if (parts.length < 2) {
-                            console.log("❌ Usage: /create <description> or /create:[filename]");
-                          } else {
-                            const description = parts.slice(1).join(' ');
-                            await this.createDml(description);
-                          }
+                            const parts = userInput.split(' ');
+                            if (parts.length < 2) {
+                                console.log("❌ Usage: /create <description> or /create:[filename]");
+                            } else {
+                                const description = parts.slice(1).join(' ');
+                                await this.createDml(description);
+                            }
                         }
                     } else if (userInput.startsWith('/save')) {
                         const parts = userInput.split(' ');
@@ -1060,7 +441,7 @@ async function main() {
     } catch (e) {
         console.error(`Warning: MCP initialization failed: ${e.message}`);
     }
-    const agent = new DMLAgent();
+    const agent = new CLIAgent();
     await agent.runInteractive();
     try { await shutdownMcpClients(); } catch {}
 }
@@ -1072,5 +453,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     });
 }
 
-
-export { DMLAgent, main };
+export { CLIAgent, main };

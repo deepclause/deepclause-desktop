@@ -1628,7 +1628,7 @@ Format your response in clear sections with headers.`;
             // Build messages array from conversation history
             const messages = [];
             
-            // Add conversation history (excluding system messages and the current input)
+            // Add conversation history (including current input which should already be in conversationMessages)
             for (const msg of conversationMessages) {
                 if (msg.type === 'user') {
                     messages.push({ role: 'user', content: msg.content });
@@ -1637,9 +1637,6 @@ Format your response in clear sections with headers.`;
                 }
                 // Skip 'system', 'error', 'streaming' messages
             }
-            
-            // Add current user input
-            //messages.push({ role: 'user', content: input });
 
             console.log('DML Agent processing input with messages:', messages);
             console.log('[ABORT] Starting streamText with abort signal:', convState.abortController?.signal.aborted);

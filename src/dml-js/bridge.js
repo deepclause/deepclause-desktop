@@ -499,6 +499,7 @@ Pre-loaded libraries:
 - NO type hints in predicate definitions
 - Use double quotes for strings, NOT single quotes
 - Compatible with SWI-Prolog
+- You may use SWI-Prolog dictionaries, e.g. \`Dict = dict{key1:"value1", key2:"value2"}\`. Make sure keys are always atoms!
 
 # OUTPUT REQUIREMENTS
 
@@ -2289,7 +2290,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
             // Main cooperative loop
             let iteration = 0;
-            const maxIterations = 1000; // Safety limit
+            const maxIterations = 10000; // Safety limit
             let finished = false;
 
             while (!finished && iteration < maxIterations) {
