@@ -5,11 +5,9 @@ import styles from './TreeEditor.module.css';
 interface TreeEditorProps {
   tree: DmlTree;
   onChange: (tree: DmlTree) => void;
-  onCompile: () => void;
-  isCompiling?: boolean;
 }
 
-export function TreeEditor({ tree, onChange, onCompile, isCompiling = false }: TreeEditorProps) {
+export function TreeEditor({ tree, onChange }: TreeEditorProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestionPosition, setSuggestionPosition] = useState({ top: 0, left: 0 });
@@ -251,9 +249,6 @@ export function TreeEditor({ tree, onChange, onCompile, isCompiling = false }: T
             Use <code className="bg-bg-light px-1.5 py-0.5 rounded text-xs font-mono border border-border text-deepclause-primary">@VariableName</code> to 
             mark inputs/outputs.
           </p>
-          <button onClick={onCompile} disabled={isCompiling} className={styles.compileButton}>
-            {isCompiling ? '⏳ Compiling...' : '⚡ Compile to DML'}
-          </button>
         </div>
 
         {tree.branches.map((branch, bIdx) => (

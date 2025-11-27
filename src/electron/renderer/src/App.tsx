@@ -11,6 +11,7 @@ import { StatusBar } from './components/layout/StatusBar';
 import { Sidebar } from './components/layout/Sidebar';
 import { EdgeTab } from './components/layout/EdgeTab';
 import { ChatContainer } from './components/chat/ChatContainer';
+import { DmlEditorView } from './components/editor/DmlEditorView';
 import { DmlFileList, DmlFileListActions } from './components/files/DmlFileList';
 import { WorkspaceExplorer, WorkspaceExplorerActions, WorkspaceExplorerProvider } from './components/files/WorkspaceExplorer';
 import { SerialConsole } from './components/console/SerialConsole';
@@ -27,7 +28,7 @@ function App() {
   // Auto-save conversation when messages change
   useConversationAutoSave();
 
-  const { sidebars, toggleSidebar, inputRequest, setInputRequest } = useAppStore();
+  const { sidebars, toggleSidebar, inputRequest, setInputRequest, activeView } = useAppStore();
   const { refreshDmlFiles, refreshWorkspaceFiles } = useFileStore();
   const { refreshConversations, createNewConversation, currentConversationId } = useConversationStore();
   const addMessage = useChatStore((state) => state.addMessage);
@@ -135,8 +136,12 @@ function App() {
             </Sidebar>
           </div>
 
-          {/* Main Content - Chat */}
-          <ChatContainer />
+          {/* Main Content - Chat or Editor */}
+          {activeView === 'editor' ? (
+            <DmlEditorView />
+          ) : (
+            <ChatContainer />
+          )}
 
           {/* Right Sidebars Container */}
           <div className="flex flex-shrink-0">

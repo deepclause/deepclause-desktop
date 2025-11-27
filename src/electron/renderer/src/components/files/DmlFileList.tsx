@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { RefreshCw, Plus } from 'lucide-react';
 import { useFileStore } from '../../stores/useFileStore';
 import { useAppStore } from '../../stores/useAppStore';
+import { useDmlEditorStore } from '../../stores/useDmlEditorStore';
 import { DmlFileTree } from './DmlFileTree';
-import { DmlEditorDialog } from '../modals/DmlEditorDialog';
 import { ConfirmDialog } from '../modals/ConfirmDialog';
 import { NewDmlFileDialog } from '../modals/NewDmlFileDialog';
 import { DeploymentDialog } from '../DeploymentDialog';
@@ -14,13 +14,9 @@ let openNewFileDialog: (() => void) | null = null;
 export function DmlFileList() {
   const { dmlFiles, isLoadingDml, refreshDmlFiles } = useFileStore();
   const setPendingInput = useAppStore((state) => state.setPendingInput);
+  const setActiveView = useAppStore((state) => state.setActiveView);
   const currentPaths = useAppStore((state) => state.currentPaths);
-
-  // Editor state
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [editingFilename, setEditingFilename] = useState('');
-  const [editingContent, setEditingContent] = useState('');
-  const [editingDescription, setEditingDescription] = useState('');
+  const openFile = useDmlEditorStore((state) => state.openFile);
 
   // Delete confirmation state
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -45,10 +41,8 @@ export function DmlFileList() {
     try {
       const result = await window.electronAPI.readDmlFileContent(filename);
       if (result.success && result.content !== undefined) {
-        setEditingFilename(filename);
-        setEditingContent(result.content);
-        setEditingDescription(result.description || '');
-        setIsEditorOpen(true);
+        openFile(filename, result.content, result.description || '');
+        setActiveView('editor');
       } else {
         alert(`Failed to load file: ${result.error || 'Unknown error'}`);
       }
@@ -66,20 +60,6 @@ export function DmlFileList() {
   const handleFileDeploy = (filename: string) => {
     setDeployingFilename(filename);
     setIsDeployDialogOpen(true);
-  };
-
-  const handleSaveFile = async (content: string, description: string) => {
-    try {
-      const result = await window.electronAPI.saveDmlFileContent(editingFilename, content, description);
-      if (result.success) {
-        await refreshDmlFiles();
-        return;
-      } else {
-        throw new Error(result.error || 'Failed to save file');
-      }
-    } catch (error) {
-      throw error;
-    }
   };
 
   const handleConfirmDelete = async () => {
@@ -101,13 +81,6 @@ export function DmlFileList() {
   const handleCancelDelete = () => {
     setIsDeleteDialogOpen(false);
     setDeletingFilename('');
-  };
-
-  const handleCloseEditor = () => {
-    setIsEditorOpen(false);
-    setEditingFilename('');
-    setEditingContent('');
-    setEditingDescription('');
   };
 
   const handleCreateNewFile = async (filename: string) => {
@@ -150,15 +123,6 @@ export function DmlFileList() {
         onFileEdit={handleFileEdit}
         onFileDelete={handleFileDelete}
         onFileDeploy={handleFileDeploy}
-      />
-
-      <DmlEditorDialog
-        isOpen={isEditorOpen}
-        filename={editingFilename}
-        initialContent={editingContent}
-        initialDescription={editingDescription}
-        onClose={handleCloseEditor}
-        onSave={handleSaveFile}
       />
 
       <ConfirmDialog
