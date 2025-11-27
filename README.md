@@ -8,16 +8,28 @@
   <strong>The Missing Logic Agent</strong><br/>
 </p>
 
---
+
 
 ![docs/app.png](docs/app.png)
 
+----
 
----
+## Updates
 
-## 🧠 What is DeepClause?
+- Deploy DML files as microapps with API for easy integration into workflows (click the rocket icon next to a DML file)
+- [A DML implementation](docs/hanoi.dml) of the paper "Solving a Million-Step LLM Task with Zero Errors" ([arXiv:2511.09030](https://arxiv.org/abs/2511.09030)) 
 
-**DeepClause** is a **neurosymbolic Agentic AI system** that bridges the gap between symbolic reasoning and neural language models. Unlike pure LLM-based agents that struggle with complex logic, multi-step reasoning, and deterministic behavior, DeepClause uses **DML (DeepClause Meta Language)** - a Prolog-based DSL - to encode agent behaviors as executable logic programs.
+- Structured edit mode to simplify writing DML code:
+
+![docs/app2.png](docs/app2.png)
+
+- Binaries not updated (still haven't gotten an Apple Developer ID to solve the code signing issue :-)
+
+----
+
+## What is DeepClause?
+
+**DeepClause** is a **neurosymbolic Agentic AI system** that attempts to brudge the gap between symbolic reasoning and neural language models. Unlike pure LLM-based agents that struggle with complex logic, multi-step reasoning, and deterministic behavior, DeepClause uses **DML (DeepClause Meta Language)** - a Prolog-based DSL - to encode agent behaviors as executable logic programs.
 
 The goal of this project is to allow users to build **accountable agents**. These are systems that are not only contextually aware (LLMs) and goal-oriented (Agents), but also logically sound (Prolog), introspectively explainable, and operationally safe. This integrated approach addresses the critical shortcomings of purely neural systems by embedding them within a framework of formal logic and secure execution, laying a principled foundation for the future of trustworthy autonomous systems.
 
@@ -525,3 +537,4 @@ DeepClause stands on the shoulders of giants:
 - **E-Mail**: andreas (at) deepclause.ai
 - **GitHub**: [github.com/deepclause/deepclause-desktop](https://github.com/deepclause/deepclause-desktop)
 - **Issues**: [github.com/deepclause/deepclause-desktop/issues](https://github.com/deepclause/deepclause-desktop/issues)
+

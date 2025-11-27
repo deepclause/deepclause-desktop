@@ -1,0 +1,204 @@
+% ===========================================================================
+% MAKER: Towers of Hanoi Solver (Default 6 Disks)
+% Implements: Maximal Decomposition, Ahead-by-K Voting, Red-Flagging
+% ===========================================================================
+
+agent_main :-
+    system("You are the MAKER execution engine optimized for Towers of Hanoi."),
+    
+    % 1. Setup Parameters
+    % Default to 6 disks as requested
+    param("num_disks:select(3,4,5,6,7)", "Number of Disks", N_Atom),
+    atom_number(N_Atom, N),
+    
+    % Voting Parameter (Paper suggests 2-3 is sufficient for high accuracy)
+    param("k_value:select(1,2,3,4)", "Voting Margin (K)", K_Atom),
+    atom_number(K_Atom, K),
+
+    % 2. Generate Initial State dynamically: [[N, N-1, ..., 1], [], []]
+    % Disks are integers: N is largest (bottom), 1 is smallest (top).
+    make_disk_stack(N, Stack),
+    InitState = [Stack, [], []],
+    
+    % 3. Define the Task Context
+    TaskDesc = "Solve the Towers of Hanoi puzzle. 
+    - There are 3 pegs: 0, 1, 2.
+    - Move all disks from Peg 0 to Peg 2.
+    - Rules: 
+      1. Move only one disk at a time. 
+      2. Never place a larger disk on top of a smaller disk.",
+
+    log("🚀 Starting MAKER for Hanoi ({N} Disks)"),
+    log("Initial State: {InitState}"),
+    
+    % 4. Start the Recursive Solving Loop
+    solve_loop(InitState, TaskDesc, K, 1, 1000). % Max 1000 steps safety limit
+
+
+% ---------------------------------------------------------------------------
+% Helper: Generate Initial Stack [N, N-1, ... 1]
+% ---------------------------------------------------------------------------
+make_disk_stack(0, []).
+make_disk_stack(N, [N|Rest]) :-
+    N > 0,
+    N1 is N - 1,
+    make_disk_stack(N1, Rest).
+
+
+% ---------------------------------------------------------------------------
+% Core MAKER Loop
+% ---------------------------------------------------------------------------
+
+% Goal Check: If Peg 2 has all disks (represented by checking Peg 0 and 1 are empty)
+solve_loop([[], [], FinalStack], _, _, Step, _) :-
+    answer("🎉 **PUZZLE SOLVED!**\n\nTotal Steps: {Step}\nFinal State: `[[], [], {FinalStack}]`").
+
+solve_loop(State, Task, K, Step, Max) :-
+    Step =< Max,
+    
+    yield("Step {Step}: `{State}`"),
+    
+    % --- CORE MAKER ALGORITHM ---
+    % Get the next state by voting until one candidate leads by K
+    get_winning_next_state(State, Task, K, [], NextState),
+    % -----------------------------
+
+    log("✅ Validated Move: {NextState}"),
+    
+    NextStep is Step + 1,
+    solve_loop(NextState, Task, K, NextStep, Max).
+
+
+% ---------------------------------------------------------------------------
+% Voting Logic (First-to-Ahead-by-K)
+% ---------------------------------------------------------------------------
+
+get_winning_next_state(State, Task, K, History, Winner) :-
+    tally_votes(History, Counts),
+    check_ahead_by_k(Counts, K, PotentialWinner),
+    ( PotentialWinner \= "" ->
+        Winner = PotentialWinner
+    ;
+        % Sampling with Red-Flagging
+        sample_valid_move(State, Task, Candidate),
+        log("🗳️ Vote: {Candidate}"),
+        append(History, [Candidate], NewHistory),
+        get_winning_next_state(State, Task, K, NewHistory, Winner)
+    ).
+
+% Tally votes: Sorts list and counts occurrences
+tally_votes(List, SortedCounts) :-
+    msort(List, Sorted),
+    clumped(Sorted, Counts), 
+    maplist(swap_pair, Counts, Swapped),
+    sort(0, @>=, Swapped, SortedCounts).
+swap_pair(V-C, C-V).
+
+% Check if leader is ahead by K
+check_ahead_by_k([], _, "").
+check_ahead_by_k([Count-Answer], K, Winner) :-
+    (Count >= K -> Winner = Answer ; Winner = "").
+check_ahead_by_k([C1-A1, C2-_ | _], K, Winner) :-
+    Diff is C1 - C2,
+    (Diff >= K -> Winner = A1 ; Winner = "").
+
+
+% ---------------------------------------------------------------------------
+% Sampling & Red-Flagging (Enhanced for Hanoi)
+% ---------------------------------------------------------------------------
+
+sample_valid_move(State, Task, Result) :-
+    repeat,
+    
+    % 1. Generate (Micro-Agent)
+    % We ask for the Next State directly in JSON
+    generate_move_llm(State, Task, RawJson),
+    
+    % 2. Red-Flagging (Validation)
+    % If validation fails, we fail and 'repeat' triggers a new LLM call
+    ( validate_hanoi_state(State, RawJson, CleanState) ->
+        Result = CleanState,
+        ! % Cut: Stop repeating
+    ;
+        log("🚩 Red Flag: Invalid JSON or Illegal Move. Discarding."),
+        fail
+    ).
+
+generate_move_llm(State, Task, Json) :-
+    @("
+    CONTEXT:
+    {Task}
+    
+    CURRENT STATE:
+    {State}
+    
+    INSTRUCTION:
+    Determine the NEXT immediate state after making exactly ONE valid legal move.
+    
+    FORMAT:
+    Return ONLY the JSON term of the list of lists as a string!
+    Example format: \"[[3,2], [1], []]\"
+    
+    Do not explain.
+    ").
+
+% ---------------------------------------------------------------------------
+% Red-Flag Validation Logic
+% ---------------------------------------------------------------------------
+
+validate_hanoi_state(PrevState, RawJson, Term) :-
+    % 1. Syntax Check: Must be valid JSON
+    catch(atom_json_term(RawJson, Term, []), _, fail),
+    
+    % 2. Structure Check: Must be a list of 3 lists
+    is_list(Term), length(Term, 3),
+    
+    yield("is_list"),
+
+    % 3. Format as string for voting consistency
+    atom_json_term(CleanJson, Term, [as(string)]),
+    CleanState = CleanJson,
+
+    yield("is_list_2"),
+
+    % 4. Logical Check: Conservation of Disks
+    % (Flatten lists and ensure sum of disks is same as previous state)
+    yield(prevState(PrevState)),
+    flatten_list(PrevState, FlatPrev),
+    yield("is_list_20"),
+    flatten_list(Term, FlatNext),
+
+    yield(tern(Term)),
+
+    yield("is_list_21"),
+    msort(FlatPrev, SortedPrev),
+    yield("is_list_22"),
+    msort(FlatNext, SortedNext),
+    yield("is_list_23"),
+    SortedPrev == SortedNext,
+
+    yield("is_list_3"),
+    
+    % 5. Logical Check: Hanoi Constraint (Larger cannot be on smaller)
+    valid_towers(Term),
+    yield("is_list_4").
+
+
+% Helper: Check if every peg is valid (Descending order check)
+valid_towers([]).
+valid_towers([Peg|Rest]) :-
+    is_valid_peg(Peg),
+    valid_towers(Rest).
+
+is_valid_peg([]).
+is_valid_peg([_]).
+is_valid_peg([Bottom, Top | Rest]) :-
+    Bottom > Top, % Constraint: Bottom must be larger than Top
+    is_valid_peg([Top|Rest]).
+
+% Helper: Flatten list of lists
+flatten_list([], []) :- true.
+flatten_list([H|T], Flat) :-
+    yield(flatten([H|T],Flat)),
+    flatten_list(T, TFlat),
+    append(H, TFlat, Flat).
