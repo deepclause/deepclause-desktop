@@ -28,6 +28,7 @@ get_assignment/4
 :- dynamic is_user_rule/2.
 :- dynamic is_llm_rule/2.
 :- dynamic state_params/3.
+:- dynamic var_names/2.
 
 :- json_object message(role:any, content:any).
 
@@ -263,16 +264,22 @@ exec_tool(Prompt, ToolResponse, Memory, Session) :-
 
 exec_agent_loop(Prompt, ResultTerm, Options, Memory, Session) :-
   writeln(exec_agent_loop(Prompt, ResultTerm, Options)),
+
+  
+  format(string(ResultString), '~w', [ResultTerm]),
+  writeln(result=ResultString),
+
   ( \+((string(Prompt);atom(Prompt))) 
   -> 
     with_output_to(atom(StrPrompt), write_term(Prompt,[quoted(true)]))
   ; 
     StrPrompt=Prompt), 
     writeln(exec_agent_loop2),
-  (py_iter(bridge:'agentLoop'(StrPrompt, ResultTerm, Options), Output),
+  (py_iter(bridge:'agentLoop'(StrPrompt, ResultString, Options, VariableNames), Output),
     (
       is_dict(Output) 
     -> (!, 
+      writeln(output_dict=Output),
       ResultTerm = Output.result_term,
       Output.success = true
       ) %probably dont need the cut
@@ -808,6 +815,7 @@ open_string(GoalStr, Stream),
   repeat,
  
   read_expand_clause(Stream, Goal, Bindings),
+
   %read_clause(Stream, Goal, [variable_names(Bindings), module(clpfd)]),
  
   save_bindings(Bindings),
@@ -925,7 +933,6 @@ plogchain(Module, Context, Memory, GoalStr, Params, Result) :-
     (
       listing(Module:_),
       writeln("*****************"),
-      listing(plogchain:is_user_rule),
       once(mi(Module:agent_main, Memory, Context, Module, Params))
     ->
       Result = "\n\n:- **Agent exited normally.**"
@@ -1058,7 +1065,6 @@ delete_memory(Handle) :-
 
  mi(agent_loop(Prompt, ResultTerm, Options), Memory, Context, Session, Params) :-
    writeln(agent_loop(Prompt, ResultTerm, Options)),
-   yield(agent_loop_call=(Prompt)),
    (
        exec_agent_loop(Prompt, ResultTerm, Options, Memory, Session)
    -> 
@@ -1501,13 +1507,19 @@ mi(read_file_to_string(File, Content, Options), Memory, Context, Session, Params
   %Goal =.. LLL,
   %writeln(LLL),
 
+
   yield(exec=(GoalName)),
+    writeln("BLABLABLA"),
   (
     catch(safe_goal(Goal), Error, true) -> true
   ; 
     yield(Goal),yield("is not a safe goal"), fail
   ),
-  catch(Goal,Error, (writeln(Error),fail)).
+  catch(
+      catch((writeln("BLABLABLA2"),Goal),Error, (writeln("ASDFG"), writeln(Error),fail)),
+      Error2,
+      (writeln("ASDFG2"), writeln(Error2), fail)
+  ).
   %(
   %    (
  %       catch(Goal,Error, (writeln(Error),fail)) 
@@ -1680,7 +1692,7 @@ mi(Goal, Memory, Context, Session, Params) :-
   ),
 
   yield(exec=(GoalName)),
-  catch(ExecGoal, Error, (yield(exec_result=fail),fail)).
+  catch(( ExecGoal), Error, (yield(exec_result=fail),fail)).
   %(
   %    (ExecGoal)
   %;
@@ -1764,7 +1776,7 @@ mi(Goal, Memory, Context, Session, Params) :-
   mi_check_user_rule(Goal, Session),
 
  writeln(is_user_rule(Goal)),
-p
+
   Goal =.. L,
   (L = [:,Session,_] ->
     ExecGoal = Goal
