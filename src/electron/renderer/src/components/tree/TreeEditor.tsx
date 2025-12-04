@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { DmlTree } from '../../../../shared/tree-schema';
 import styles from './TreeEditor.module.css';
 
@@ -12,7 +12,43 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestionPosition, setSuggestionPosition] = useState({ top: 0, left: 0 });
   const [currentVariable, setCurrentVariable] = useState('');
+  const [suggestionType, setSuggestionType] = useState<'variable' | 'tool'>('variable');
+  const [availableTools, setAvailableTools] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Fetch available tools on component mount
+  useEffect(() => {
+    const fetchTools = async () => {
+      try {
+        const result = await window.electronAPI.getAvailableTools();
+        if (result.success && result.tools) {
+          setAvailableTools(result.tools);
+        }
+      } catch (error) {
+        console.error('Failed to fetch available tools:', error);
+        // Fallback to default tools if fetch fails
+        setAvailableTools([
+          'web_search',
+          'google_scholar_search',
+          'brave_search',
+          'visit_webpage',
+          'workspace_reader',
+          'file_downloader',
+          'visualizer',
+          'diagram_generator',
+          'data_analyzer',
+          'linux_vm_with_sh_and_python'
+        ]);
+      }
+    };
+    
+    fetchTools();
+  }, []);
+
+  // List of available tools
+  const getAvailableTools = (): string[] => {
+    return availableTools;
+  };
 
   // Extract all @Variables from the tree
   const extractVariables = (text: string): string[] => {
@@ -38,38 +74,58 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
     const value = e.target.value;
     updateFn(value);
 
-    // Check if we're typing a variable
     const cursorPos = e.target.selectionStart;
     const textBeforeCursor = value.substring(0, cursorPos);
-    const match = textBeforeCursor.match(/@(\w*)$/);
     
-    if (match) {
-      const partialVar = match[1];
+    // Check if we're typing a variable (@symbol)
+    const variableMatch = textBeforeCursor.match(/@(\w*)$/);
+    // Check if we're typing a tool ($symbol)
+    const toolMatch = textBeforeCursor.match(/\$(\w*)$/);
+    
+    if (variableMatch) {
+      const partialVar = variableMatch[1];
       setCurrentVariable(partialVar);
+      setSuggestionType('variable');
       const allVars = getAllVariables();
       const filtered = allVars.filter(v => v.toLowerCase().startsWith(partialVar.toLowerCase()));
       
       if (filtered.length > 0) {
-        // Get textarea and use textarea-caret library approach
         const textarea = e.target;
-        
-        // Count characters per line based on textarea width
         const lines = textBeforeCursor.split('\n');
         const currentLineNumber = lines.length - 1;
         const currentLineText = lines[currentLineNumber];
         
-        // Estimate position based on character count and font
-        const charWidth = 8; // approximate character width in pixels
+        const charWidth = 8;
         const lineHeight = 22;
         
-        // Calculate approximate horizontal position
         const charsInCurrentLine = currentLineText.length;
-        const estimatedLeft = Math.min(charsInCurrentLine * charWidth, textarea.offsetWidth - 160); // Keep dropdown visible
-        
-        // Position below the current line
+        const estimatedLeft = Math.min(charsInCurrentLine * charWidth, textarea.offsetWidth - 160);
         const top = (currentLineNumber + 1) * lineHeight + 10;
         
-        console.log('Dropdown position:', { top, left: estimatedLeft, line: currentLineNumber, chars: charsInCurrentLine });
+        setSuggestionPosition({ top, left: estimatedLeft });
+        setShowSuggestions(true);
+      } else {
+        setShowSuggestions(false);
+      }
+    } else if (toolMatch) {
+      const partialTool = toolMatch[1];
+      setCurrentVariable(partialTool);
+      setSuggestionType('tool');
+      const allTools = getAvailableTools();
+      const filtered = allTools.filter(t => t.toLowerCase().startsWith(partialTool.toLowerCase()));
+      
+      if (filtered.length > 0) {
+        const textarea = e.target;
+        const lines = textBeforeCursor.split('\n');
+        const currentLineNumber = lines.length - 1;
+        const currentLineText = lines[currentLineNumber];
+        
+        const charWidth = 8;
+        const lineHeight = 22;
+        
+        const charsInCurrentLine = currentLineText.length;
+        const estimatedLeft = Math.min(charsInCurrentLine * charWidth, textarea.offsetWidth - 160);
+        const top = (currentLineNumber + 1) * lineHeight + 10;
         
         setSuggestionPosition({ top, left: estimatedLeft });
         setShowSuggestions(true);
@@ -90,9 +146,10 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
     const textBeforeCursor = value.substring(0, cursorPos);
     const textAfterCursor = value.substring(cursorPos);
     
-    // Find the @ symbol position
-    const atPos = textBeforeCursor.lastIndexOf('@');
-    const newValue = value.substring(0, atPos) + '@' + varName + textAfterCursor;
+    // Find the @ or $ symbol position
+    const prefix = suggestionType === 'variable' ? '@' : '$';
+    const symbolPos = textBeforeCursor.lastIndexOf(prefix);
+    const newValue = value.substring(0, symbolPos) + prefix + varName + textAfterCursor;
     
     // Update the appropriate field based on editingId
     tree.branches.forEach(branch => {
@@ -118,11 +175,18 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
   const formatTextWithVariables = (text: string) => {
     if (!text) return null;
     
-    const parts = text.split(/(@\w+)/g);
+    // Split on both @variables and $tools
+    const parts = text.split(/(@\w+|\$\w+)/g);
     return parts.map((part, idx) => {
       if (part.startsWith('@')) {
         return (
           <span key={idx} className={styles.variable}>
+            {part}
+          </span>
+        );
+      } else if (part.startsWith('$')) {
+        return (
+          <span key={idx} className={styles.tool}>
             {part}
           </span>
         );
@@ -247,7 +311,8 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
             Build your DML agent by describing what it should do in plain language. Start with <strong>branches</strong> (different approaches), 
             break each into <strong>steps</strong>, and add <strong>alternatives</strong> when multiple options exist. 
             Use <code className="bg-bg-light px-1.5 py-0.5 rounded text-xs font-mono border border-border text-deepclause-primary">@VariableName</code> to 
-            mark inputs/outputs.
+            mark inputs/outputs and <code className="bg-bg-light px-1.5 py-0.5 rounded text-xs font-mono border border-border text-blue-600">$tool_name</code> to 
+            reference tools.
           </p>
         </div>
 
@@ -277,20 +342,36 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
                       className={styles.suggestions}
                       style={{ top: suggestionPosition.top, left: suggestionPosition.left }}
                     >
-                      {getAllVariables()
-                        .filter(v => v.toLowerCase().startsWith(currentVariable.toLowerCase()))
-                        .map(varName => (
-                          <div
-                            key={varName}
-                            className={styles.suggestionItem}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              insertVariable(varName);
-                            }}
-                          >
-                            @{varName}
-                          </div>
-                        ))}
+                      {suggestionType === 'variable' 
+                        ? getAllVariables()
+                            .filter(v => v.toLowerCase().startsWith(currentVariable.toLowerCase()))
+                            .map(varName => (
+                              <div
+                                key={varName}
+                                className={styles.suggestionItem}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  insertVariable(varName);
+                                }}
+                              >
+                                @{varName}
+                              </div>
+                            ))
+                        : getAvailableTools()
+                            .filter(t => t.toLowerCase().startsWith(currentVariable.toLowerCase()))
+                            .map(toolName => (
+                              <div
+                                key={toolName}
+                                className={styles.suggestionItem}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  insertVariable(toolName);
+                                }}
+                              >
+                                ${toolName}
+                              </div>
+                            ))
+                      }
                     </div>
                   )}
                 </div>
@@ -330,20 +411,36 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
                             className={styles.suggestions}
                             style={{ top: suggestionPosition.top, left: suggestionPosition.left }}
                           >
-                            {getAllVariables()
-                              .filter(v => v.toLowerCase().startsWith(currentVariable.toLowerCase()))
-                              .map(varName => (
-                                <div
-                                  key={varName}
-                                  className={styles.suggestionItem}
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    insertVariable(varName);
-                                  }}
-                                >
-                                  @{varName}
-                                </div>
-                              ))}
+                            {suggestionType === 'variable'
+                              ? getAllVariables()
+                                  .filter(v => v.toLowerCase().startsWith(currentVariable.toLowerCase()))
+                                  .map(varName => (
+                                    <div
+                                      key={varName}
+                                      className={styles.suggestionItem}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        insertVariable(varName);
+                                      }}
+                                    >
+                                      @{varName}
+                                    </div>
+                                  ))
+                              : getAvailableTools()
+                                  .filter(t => t.toLowerCase().startsWith(currentVariable.toLowerCase()))
+                                  .map(toolName => (
+                                    <div
+                                      key={toolName}
+                                      className={styles.suggestionItem}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        insertVariable(toolName);
+                                      }}
+                                    >
+                                      ${toolName}
+                                    </div>
+                                  ))
+                            }
                           </div>
                         )}
                       </div>
@@ -389,20 +486,36 @@ export function TreeEditor({ tree, onChange }: TreeEditorProps) {
                                       className={styles.suggestions}
                                       style={{ top: suggestionPosition.top, left: suggestionPosition.left }}
                                     >
-                                      {getAllVariables()
-                                        .filter(v => v.toLowerCase().startsWith(currentVariable.toLowerCase()))
-                                        .map(varName => (
-                                          <div
-                                            key={varName}
-                                            className={styles.suggestionItem}
-                                            onMouseDown={(e) => {
-                                              e.preventDefault();
-                                              insertVariable(varName);
-                                            }}
-                                          >
-                                            @{varName}
-                                          </div>
-                                        ))}
+                                      {suggestionType === 'variable'
+                                        ? getAllVariables()
+                                            .filter(v => v.toLowerCase().startsWith(currentVariable.toLowerCase()))
+                                            .map(varName => (
+                                              <div
+                                                key={varName}
+                                                className={styles.suggestionItem}
+                                                onMouseDown={(e) => {
+                                                  e.preventDefault();
+                                                  insertVariable(varName);
+                                                }}
+                                              >
+                                                @{varName}
+                                              </div>
+                                            ))
+                                        : getAvailableTools()
+                                            .filter(t => t.toLowerCase().startsWith(currentVariable.toLowerCase()))
+                                            .map(toolName => (
+                                              <div
+                                                key={toolName}
+                                                className={styles.suggestionItem}
+                                                onMouseDown={(e) => {
+                                                  e.preventDefault();
+                                                  insertVariable(toolName);
+                                                }}
+                                              >
+                                                ${toolName}
+                                              </div>
+                                            ))
+                                      }
                                     </div>
                                   )}
                                 </div>

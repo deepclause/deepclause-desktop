@@ -264,6 +264,16 @@ textarea::placeholder {
   font-size: 13px;
 }
 
+.tool {
+  background: #E3F2FD;
+  color: #1565C0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+}
+
 .textareaWrapper {
   position: relative;
   width: 100%;

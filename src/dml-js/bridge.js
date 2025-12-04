@@ -7,13 +7,13 @@ import { z } from 'zod';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { generateText, tool as aiTool, streamText, experimental_createMCPClient, generateObject } from "ai";
+import { generateText, tool as aiTool, streamText, experimental_createMCPClient, generateObject, stepCountIs, hasToolCall  } from "ai";
 import { google } from '@ai-sdk/google';
 import {openrouter} from '@openrouter/ai-sdk-provider'
 import {createOpenAI, openai} from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import {anthropic} from '@ai-sdk/anthropic';
-import { getGoalModelConfig, getConverterModelConfig, resolveProvider } from '../config/models.js';
+import { getGoalModelConfig, getConverterModelConfig, resolveProvider, getAgentModelConfig } from '../config/models.js';
 
 // Access resource resolver from global (set by main process in Electron)
 // Use a getter function for lazy access to avoid import-time undefined issues
@@ -25,6 +25,15 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
+
+let agentModelConfig = null;
+function getAgentConfig() {
+    if (!agentModelConfig) {
+        agentModelConfig = getAgentModelConfig();
+    }
+    return { name: agentModelConfig.name, temperature: agentModelConfig.temperature };
+}
+
 
 const providerMap = {
     google: (m) => {
@@ -275,7 +284,7 @@ You are an expert Prolog programmer. Your task is to convert user requests into 
 
 # CORE OBJECTIVE
 
-Break down user requests into discrete steps and generate Prolog code that describes their execution. Each step should be either:
+Break down user requests into small discrete steps and generate Prolog code that describes their execution. Each step should be either:
 1. A tool call (e.g., web search, file operations)
 2. Data processing (entity extraction, summarization, logical operations)
 
@@ -304,6 +313,8 @@ The main execution logic goes in the \`agent_main\` predicate.
 - \`generate(Prompt, Output)\` - Generate text with LLM (no streaming, for long content)
 - \`answer(Text)\` - Send final answer to user (calls end_thinking automatically)
 - \`yield(Text)\` - Send intermediate output to user
+- \`agent_loop(TaskPrompt, Output, Options)\` - Use an autonotmous sub agent to try solve the task given by TaskPrompt using the tools provided in the Options.
+    Example:  agent_loop("Find  recipes for Chicken Tika Massala", Result,[tools([brave_search])]) 
 
 ## Context Management
 - \`system(Text)\` - Add system message to agent memory
@@ -325,6 +336,7 @@ The main execution logic goes in the \`agent_main\` predicate.
 ## Tool Calls
 - \`tool(Goal, Output)\` - Execute a tool
   - Example: \`tool(websearch("AI news"), Results)\`
+  - There is only tool/2 and NO tool/1, even if a tool does not have an output, use tool(Goal, Output)!
 
 ## Linux VM with Bash/Python/CLI Tools
 For complex data processing, analysis, and system tasks, you have access to a persistent Linux VM:
@@ -374,6 +386,12 @@ Rules for @-Predicates:
 - External data must be fetched via tool/2 first
 - May only have a single branch.
 - For complex data processing or system tasks, prefer VM execution over @-predicates
+
+When to use @-predicates and when to use agent_loop:
+- Use @-predicates for simple data extraction, transformation, or formatting tasks that can be done in a single step
+- Use agent_loop for complex tasks that require highly dynamic adaptation, multi-step reasoning, or iterative refinement. 
+  When using agent_loop try to provide a clear task prompt and limit the tools available to the agent to only those that are neccesary for the task.
+
 
 # CODE STRUCTURE REQUIREMENTS
 
@@ -464,6 +482,9 @@ chat("Provide a comprehensive answer based on the data").
 - Syntax: \`log(task="Age is {Age}")\`
 - DO NOT mix format/3 and string interpolation
 - DO NOT use string interpolation inside format strings
+- THIS IS WRONG: \`format(string(R), "Value is {Value}", [Value])\`
+- THIS IS WRONG: \`format(string(R), "Value is {Value}", [])\`
+- THIS IS RIGHT: \`log(task="Value is {Value}")\`
 
 ## Quasi-Quotations (For Complex Content)
 Use for code, LaTeX, or strings with many special characters:
@@ -500,6 +521,7 @@ Pre-loaded libraries:
 - Use double quotes for strings, NOT single quotes
 - Compatible with SWI-Prolog
 - You may use SWI-Prolog dictionaries, e.g. \`Dict = dict{key1:"value1", key2:"value2"}\`. Make sure keys are always atoms!
+- DO NOT use findall/4, only use findall/3!
 
 # OUTPUT REQUIREMENTS
 
@@ -597,12 +619,223 @@ For images: \`![Description](filename.png)\` (relative to workspace)
 ## File Loading
 Use \`consult(File)\` to load Prolog facts (relative to workspace root)
 
+DO NOT USE ANY PROVIDED SEARCH CONTEXT IN THE DML CODE UNLESS SPECIFICALLY REQUESTED BY THE USER!
+
 # EXAMPLES
 
 <examples>
 {examples}
 </examples>
 `;
+
+// Validation prompt for analyzing generated Prolog code
+const validationPrompt = `You are an expert Prolog code reviewer specializing in DML (DeepClause Markup Language). Your task is to deeply analyze generated Prolog code and identify issues based on the DML specification.
+
+# YOUR TASK
+
+Analyze the provided Prolog/DML code and determine if it is VALID or INVALID. If INVALID, provide specific correction points.
+
+# ANALYSIS CRITERIA
+
+Perform a deep analysis checking for:
+
+## 1. Structural Issues
+- Missing or malformed \`agent_main\` predicate
+- Insufficient solution branches (should have 3-5 branches with varying complexity)
+- Missing final fallback branch
+- Incorrect predicate organization
+- Code outside predicates or \`agent_main\`
+
+## 2. String Handling Errors
+- Single quotes used instead of double quotes for strings
+- Mixing format/3 with string interpolation (e.g., \`format(string(R), "Value is {Value}", [])\` is WRONG)
+- Incorrect format/3 syntax (must use ~w, not other format characters)
+- Incorrect quasi-quotation syntax (must end with \`|}\`, not \`||}\`)
+- Improperly escaped special characters in strings
+
+## 3. Tool Usage Issues
+- Using \`tool/1\` instead of \`tool/2\` (even for tools with no output, use tool/2)
+- Not verifying tool call results
+- Missing error handling for tool failures
+- Not logging progress after tool calls
+
+## 4. Data Type Errors
+- Using atoms (lowercase or 'single quoted') where strings should be used
+- Missing type conversions (atom_string, atom_number)
+- Incorrect dictionary syntax (keys must be atoms, not strings)
+- Using length/1 instead of length/2
+
+## 5. @-Predicate Violations
+- @-predicates with side effects or tool calls
+- @-predicates mixed with regular Prolog code
+- @-predicates with multiple branches
+- @-predicates not taking a single string argument
+- Using @-predicates for tasks better suited to VM execution
+
+## 6. VM Execution Issues
+- Complex data processing not using VM when appropriate
+- Not writing Python scripts to files before executing
+- Missing explicit python3 command
+- Not checking return codes from VM commands
+
+## 7. Control Flow Problems
+- Using catch/3 blocks
+- Using yall library lambda syntax (>>)
+- Over-complex control structures instead of simple predicate chains
+- Missing verification steps after complex operations
+
+## 8. Final Answer Pattern
+- Not calling \`end_thinking\` before generating final answer
+- Not using \`system/1\` and \`observation/1\` to build context
+- Directly answering without gathering information first
+- Using write/writeln for output instead of answer/yield/chat
+
+## 9. Prolog Compatibility
+- Using features not compatible with SWI-Prolog
+- Type hints in predicate definitions
+- Incorrect library usage
+- Missing required library imports
+
+## 10. Logical Correctness
+- Predicates that don't match the user's request
+- Missing essential steps to accomplish the task
+- Incorrect sequencing of operations
+- Lack of fallback strategies
+
+## 11. Best Practices
+- Missing meaningful log messages
+- No comments explaining complex steps
+- Variables not properly scoped
+- Missing verification after complex operations
+- Not using appropriate branches (complex -> moderate -> simple -> fallback)
+
+## 12. Special Cases
+- Use findall/4 instead of findall/3
+- For analysis tasks, not using tools to read full content
+- For structured data, not using Prolog terms or @-predicates
+- For code generation, not using quasi-quotations
+
+# OUTPUT FORMAT
+
+You must respond with EXACTLY this structure:
+
+**If code is valid:**
+\`\`\`
+VALID
+\`\`\`
+
+**If code has issues:**
+\`\`\`
+INVALID
+
+Issues found:
+
+1. [Category]: [Specific issue description]
+   Location: [Where in the code]
+   Fix: [How to correct it]
+
+2. [Category]: [Specific issue description]
+   Location: [Where in the code]
+   Fix: [How to correct it]
+
+[... more issues ...]
+\`\`\`
+
+# EXAMPLES
+
+Example 1 - INVALID (using tool/1):
+\`\`\`
+INVALID
+
+Issues found:
+
+1. Tool Usage: Using tool/1 instead of tool/2
+   Location: tool(websearch("AI news"))
+   Fix: Change to tool(websearch("AI news"), Results) and use the Results variable
+
+2. Missing Verification: No check of tool call result
+   Location: After tool call
+   Fix: Add verification step to ensure Results is not empty/error
+\`\`\`
+
+Example 2 - INVALID (string formatting):
+\`\`\`
+INVALID
+
+Issues found:
+
+1. String Formatting: Mixing format/3 with string interpolation
+   Location: format(string(R), "Value is {Value}", [])
+   Fix: Use either format(string(R), "Value is ~w", [Value]) OR log(task="Value is {Value}")
+
+2. String Type: Using single quotes for strings
+   Location: X = 'hello'
+   Fix: Change to X = "hello"
+\`\`\`
+
+Now analyze the following code:`;
+
+
+/**
+ * Validate generated Prolog code using LLM analysis
+ * Returns { valid: boolean, issues: string[] }
+ */
+async function validatePrologCode(code, question) {
+    try {
+        const userPrompt = `User Request: ${question}
+
+Generated Code:
+\`\`\`prolog
+${code}
+\`\`\`
+
+Analyze this code thoroughly and determine if it is VALID or INVALID.`;
+
+        const goalConfig = getCurrentGoalModelConfig();
+        const result = await generateText({
+            model: resolveProvider(goalConfig, providerMap),
+            system: validationPrompt,
+            prompt: userPrompt,
+            temperature: 0.1,
+            maxTokens: 4096,
+        });
+
+        const response = result.text.trim();
+        
+        // Check if response starts with VALID
+        if (response.startsWith('VALID')) {
+            return { valid: true, issues: [] };
+        }
+        
+        // Extract issues from INVALID response
+        if (response.startsWith('INVALID')) {
+            // Extract the issues section
+            const issuesMatch = response.match(/Issues found:([\s\S]*)/);
+            if (issuesMatch) {
+                const issuesText = issuesMatch[1].trim();
+                // Split into individual issues (numbered lines)
+                const issues = issuesText
+                    .split(/\n(?=\d+\.)/)
+                    .map(issue => issue.trim())
+                    .filter(issue => issue.length > 0);
+                
+                return { valid: false, issues };
+            }
+            
+            // Fallback: return the whole response as a single issue
+            return { valid: false, issues: [response] };
+        }
+        
+        // Unexpected format - treat as invalid
+        console.warn('Unexpected validation response format:', response);
+        return { valid: false, issues: ['Validation returned unexpected format: ' + response] };
+        
+    } catch (error) {
+        console.error('Code validation failed:', error);
+        // Don't fail the whole process, just skip validation
+        return { valid: true, issues: [] };
+    }
+}
 
 
 // Extract the first valid JSON object/array from a Markdown LLM response.
@@ -1013,7 +1246,7 @@ export async function* toolAgent(task, attempt, messages, session, mcpServers, a
         const aiToolsBase = await buildAiTools(session, progressCallback);
 
         // Wrap each tool's execute function to enable polling during execution
-        const wrappedTools = {};
+        let wrappedTools = {};
         const self = this; // Capture generator context
         
         for (const [name, tool] of Object.entries(aiToolsBase)) {
@@ -1143,6 +1376,177 @@ export async function* toolAgent(task, attempt, messages, session, mcpServers, a
 }
 
 /**
+ * Execute agentic loop using Vercel AI SDK tools.
+ * Loops until the agent outputs a Prolog result term.
+ */
+export async function* agentLoop(prompt, resultTerm, options, session, abortSignal, dmlCode) {
+
+    try {
+
+        let messages = [];
+        const resultTerm_ = resultTerm;
+
+        if (!GLOBAL_TOOLS || GLOBAL_TOOLS.length === 0) {
+            const { DEFAULT_TOOLS } = await import('./tools.js');
+            GLOBAL_TOOLS = DEFAULT_TOOLS.slice();
+        }
+
+        // Use a shared message queue that can be accessed during tool execution
+        const messageQueue = [];
+        let queueResolver = null;
+        
+        // Create a progress callback that signals new messages
+        const progressCallback = function(message) {
+            messageQueue.push(message);
+            // Notify any waiting consumers
+            //if (queueResolver) {
+            //    queueResolver = null;
+            //    resolve();
+            //}
+        };
+
+        let resultTermExtracted = resultTerm;
+
+        // Build the AI SDK tools map with progress callback
+        const { buildAiTools } = await import('./tools.js');
+        const aiToolsBase = await buildAiTools(session, progressCallback);
+
+        // Merge MCP tools (without wrapping, as they don't have progress callbacks)
+        const aiTools = { ...aiToolsBase, ...MCP_TOOL_MAP };
+
+        //filter tools: only use the ones in options[0].tools[0]
+        const filteredTools = {};
+        if (options && options.length > 0 && options[0].tools && options[0].tools.length > 0) {
+            const allowedTools = new Set(options[0].tools[0][0]);
+            for (const [name, tool] of Object.entries(aiTools)) {
+                if (allowedTools.has(name)) {
+                    filteredTools[name] = tool;
+                }
+            }
+        } else {
+            Object.assign(filteredTools, aiToolsBase);
+        }
+
+
+        let finalAnswer = ""
+        filteredTools["final_answer"] =  aiTool({
+            description: "Provide the final answer to the user's request. Use this when you have completed the task and want to deliver your final response. This will end the agent's execution.",
+            inputSchema: z.object({ 
+                message: z.string().describe("The final answer or summary to present to the user")
+            }),
+            execute: async ({ message }) => {
+                finalAnswer = message;
+                return "";
+            }
+        });
+        
+
+        const today = new Date().toISOString().split('T')[0];
+        const maxSteps = options?.max_steps || 10;
+        
+        const system = [
+            `Today is ${today}.`,
+`### SYSTEM INSTRUCTIONS
+
+**ROLE:**
+You are a specialized Sub-Agent designed to execute specific tasks. You do not interact directly with the user; you receive tasks from a Supervisor Agent and report results back to them.
+
+**OBJECTIVE:**
+Your goal is to complete the assigned task efficiently using ONLY the tools provided to you. Do not rely on your internal knowledge base for factual queries if a tool exists to retrieve that data.
+
+**OPERATIONAL RULES:**
+1. **Tool Priority:** Always check if a tool can solve the problem before attempting to answer directly.
+2. **Argument Validation:** Before calling a tool, ensure you have all required arguments. If arguments are missing, return a failure message to the Supervisor explaining what is missing.
+3. **No Hallucination:** Do not make up tool outputs. If a tool fails or returns empty data, state that clearly.
+4. **Iterative Problem Solving:** If a tool output requires further processing using another tool, do so. 
+5. **Final Output:** When the task is complete, provide a concise summary of the result.
+6. **Finish Condition:** If the task is complete, then call the final_answer tool with the result.
+
+**FAILURE PROTOCOL:**
+If you cannot complete the task with the available tools, do not guess. Return a response starting with "UNABLE_TO_COMPLETE:" followed by the reason (e.g., missing tool, API error, ambiguous request) and pass this to the final answer tool.
+
+**YOUR PROCESS:**
+1. Analyze the input task.
+2. Determine which tool(s) are necessary.
+3. Formulate the tool call(s).
+4. Analyze the tool output.
+5. Formulate the final response to the Supervisor and call the final_answer tool.`
+        ].join('\n');
+
+        console.log('agent_loop system prompt:', system)
+
+        const goalConfig = getCurrentGoalModelConfig();
+        
+        // Agentic loop
+        let currentMessages = Array.isArray(messages) ? [...messages] : [];
+        currentMessages.push({ role: "user", content: String(prompt ?? '') });
+        
+        let responseText = '';
+
+        const agentConfig = getAgentConfig();
+        // Start streamText for this step
+        const streamResult = await streamText({
+            model: resolveProvider(getAgentModelConfig(), providerMap),
+            system,
+            messages: currentMessages,
+            tools: filteredTools,
+            stopWhen: [
+                hasToolCall("final_answer"),
+                stepCountIs(options?.max_steps || 20), // Maximum 20 steps
+            ],
+            temperature: agentConfig.temperature,
+            //abortSignal: abortSignal,
+        });
+    
+        
+        // Stream the response and check for result terms
+        for await (const chunk of streamResult.fullStream) {
+            // Check abort signal
+            if (abortSignal?.aborted) {
+                yield `<log>Agent step aborted</log>\n`;
+                break;
+            }
+            
+            // Yield any queued messages
+            while (messageQueue.length > 0) {
+                const msg = messageQueue.shift();
+                yield `<log>${msg}</log>\n`;
+            }
+            
+            if (chunk.type === 'text-delta') {
+                const text = chunk.text || '';
+                if (text) {
+                    responseText += text;
+                    yield text; // Stream text in real-time
+                    
+                }
+
+            } else if (chunk.type === 'tool-call') {
+
+                if (filteredTools[chunk.toolName]) {
+                    yield `<log>Executing tool ${chunk.toolName}</log>\n`;
+                }
+
+
+            }
+        }
+        
+        // Final flush of any remaining messages
+        while (messageQueue.length > 0) {
+            const msg = messageQueue.shift();
+            yield `<log>${msg}</log>\n`;
+        }
+        
+        yield { result_term: responseText, output: responseText,success: true };
+
+    } catch (error) {
+        const msg = `Error: ${error.message}`;
+        yield msg;
+        yield { result_term: `result(error("${error.message}"))`, success: false };
+    }
+}
+
+/**
  * Execute instruction using LLM
  */
 export async function* instruction(task, attempt, messages, abortSignal = null) {
@@ -1217,6 +1621,21 @@ export async function* evaluateGoal(swipl, goal, goalInContext, goalList, origGo
 
         const today = new Date().toISOString().split('T')[0];
         
+        // Build bound variables information block
+        const boundVarsInfo = [];
+        for (let i = 0; i < newArgs.length; i++) {
+            const argStr = String(newArgs[i]);
+            const originalArgStr = String(argsDef[i]);
+            if (!(argStr.startsWith('_') && !argStr.includes('{'))) {
+                // This is a bound variable/constant
+                boundVarsInfo.push({
+                    position: i + 1,
+                    name: originalArgStr.replace(/'/g, ''),
+                    value: argStr
+                });
+            }
+        }
+        
         let systemPrompt;
         
         if (!hasUnboundVars) {
@@ -1226,16 +1645,16 @@ export async function* evaluateGoal(swipl, goal, goalInContext, goalList, origGo
 You are an expert reasoning engine evaluating Prolog goals against text.
 
 Given:
-- A text (in triple backticks)
-- A Prolog goal like: ${newGoal}
+- A text (in triple backticks) - this includes bound variable values
+- A Prolog goal: ${outputTemplate}
 - Goal explanation: ${ruleExplanation === "na" ? goalInContext : ruleExplanation}
 
 Your task: Determine if the goal is TRUE or FALSE based on the text.
 
-Since all arguments in the goal are already bound (no variables to assign), you only need to verify whether the goal holds true or false given the text.
+The text section contains both the main content and a "BOUND VARIABLES" section that lists the values already assigned to certain arguments. Use these bound values when evaluating the goal.
 
 Instructions:
-1. Analyze the text to determine if the goal is satisfied
+1. Analyze the text and bound variables to determine if the goal is satisfied
 2. Return TRUE if the goal holds, FALSE otherwise
 
 Output format:
@@ -1260,11 +1679,13 @@ FALSE
 You are an expert reasoning engine evaluating Prolog goals against text.
 
 Given:
-- A text (in triple backticks)
-- A Prolog goal like: ${newGoal}
+- A text (in triple backticks) - this includes bound variable values
+- A Prolog goal: ${outputTemplate}
 - Goal explanation: ${ruleExplanation === "na" ? goalInContext : ruleExplanation}
 
 Your task: Generate a list of Prolog terms that satisfy the goal.
+
+The text section contains both the main content and a "BOUND VARIABLES" section. The bound variables have already been assigned values - you should use "_" as placeholder for these in your output and ONLY assign values to the unbound variables (those starting with _ in the goal template).
 
 CRITICAL INSTRUCTIONS FOR OUTPUT FORMAT:
 1. Each term MUST be complete and valid Prolog syntax on its own
@@ -1272,17 +1693,24 @@ CRITICAL INSTRUCTIONS FOR OUTPUT FORMAT:
 3. DO NOT use "---" inside quasi-quotations, lists, or term structures
 4. The "---" separator ONLY appears BETWEEN complete, independent terms
 
-CRITICAL INSTRUCTIONS FOR ARGUMENTS:
-1. For arguments that are already bound (not starting with _), use the underscore placeholder "_" in your output
-2. Only assign values to variables that start with underscore (e.g., _Variable, _Name, _Results)
-3. DO NOT repeat long input text in your output - use "_" for already-provided arguments
-4. Each result term should follow this template: ${outputTemplate}
+CRITICAL INSTRUCTIONS FOR BOUND VS UNBOUND VARIABLES:
+${boundVarsInfo.length > 0 ? 
+`1. The following arguments are ALREADY BOUND (see BOUND VARIABLES in the text):
+${boundVarsInfo.map(v => `   - Argument ${v.position} (${v.name})`).join('\n')}
+   For these arguments, ALWAYS use the underscore placeholder "_" in your output.
+   DO NOT repeat their values in your output terms.
+` : ''}2. Variables starting with underscore in the goal template (${outputTemplate}) are UNBOUND.
+   These are the ONLY variables you should assign values to.
+3. Each result term should follow this template: ${outputTemplate}
+   Replace each unbound variable (starting with _) with a value from the text.
+   Keep "_" as placeholder for all bound arguments.
 
-Example argument handling:
-- Goal: process({|string|| very long text... |}, _Output) 
-  Output: process(_, "result") NOT process({|string|| very long text... |}, "result")
-- Goal: extract(_Name, _Age, "source text")
-  Output: extract("John", 30, _) NOT extract("John", 30, "source text")
+${boundVarsInfo.length > 0 ? `
+Example with bound arguments:
+If the goal template is: process(_Output, _Status) and Arguments 3-5 are bound,
+Your output should be: process("extracted value", "success", _, _, _)
+NOT: process("extracted value", "success", "repeated bound value", ...)
+` : ''}
 
 FORMATTING RULES FOR LISTS:
 When a variable should be bound to a LIST of items:
@@ -1380,7 +1808,21 @@ Remember:
 `;
         }
 
-        const userPrompt = `Text:\n\`\`\`\n${text}\n\`\`\`\n\nGoal: ${newGoal}\nExplanation: ${ruleExplanation === "na" ? goalInContext : ruleExplanation}`;
+        // Build the text block with bound variables information
+        let textWithBoundVars = text;
+        if (boundVarsInfo.length > 0) {
+            const boundVarsBlock = "\n\n--- BOUND VARIABLES (already have values - use _ as placeholder in output) ---\n" +
+                boundVarsInfo.map(info => {
+                    const truncatedValue = info.value.length > 10000 
+                        ? info.value.substring(0, 10000) + "... [truncated]"
+                        : info.value;
+                    return `Argument ${info.position} (${info.name}): ${truncatedValue}`;
+                }).join('\n') + 
+                "\n--- END BOUND VARIABLES ---";
+            textWithBoundVars = text + boundVarsBlock;
+        }
+
+        const userPrompt = `Text:\n\`\`\`\n${textWithBoundVars}\n\`\`\`\n\nGoal: ${outputTemplate}\nExplanation: ${ruleExplanation === "na" ? goalInContext : ruleExplanation}`;
 
         let allTerms = [];
         let reasoning = "";
@@ -1868,7 +2310,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                 model: resolveProvider(converterConfig, providerMap),
                 system: systemPrompt,
                 messages,
-                temperature: converterConfig.temperature,
+                temperature: converterConfig.temperature+i*0.1,
                 reasoning: { reasoningSummary: 'auto' },
                 config: { thinkingConfig: { includeThoughts: true, thinkingBudget: 8192 } },
                 providerOptions: {
@@ -1936,7 +2378,35 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                 continue;
             }
 
-            // Validate code
+            // Step 1: Semantic validation using LLM
+            yield `<log>task="Analyzing code quality and DML compliance"</log>`;
+            /*const semanticValidation = await validatePrologCode(code, question);
+            
+            if (!semanticValidation.valid) {
+                lastError = "Code analysis found issues:\n" + semanticValidation.issues.join('\n\n');
+                yield `<log>task="Code analysis failed with ${semanticValidation.issues.length} issues"</log>`;
+                
+                // Log issues to console for debugging
+                console.log('\n⚠️  Code Validation Issues Found:');
+                console.log('═'.repeat(80));
+                semanticValidation.issues.forEach((issue, idx) => {
+                    console.log(`\nIssue ${idx + 1}:`);
+                    console.log(issue);
+                });
+                console.log('═'.repeat(80) + '\n');
+                
+                // Provide detailed feedback for regeneration
+                messages.push({
+                    role: 'user',
+                    content: `The generated code has the following issues that need to be fixed:\n\n${semanticValidation.issues.join('\n\n')}\n\nPlease regenerate the code addressing ALL of these issues. Return ONLY corrected Prolog code inside a single \`\`\`prolog block. Do not add explanations outside the block.`
+                });
+                continue;
+            } else {
+                console.log('✅ Code validation passed - no issues found');
+                yield `<log>task="Code analysis passed"</log>`;
+            }*/
+
+            // Step 2: Syntax validation using swipl
             const validation = await validateProlog(code);
             if (validation.ok) {
                 if (i > 0) {
@@ -1946,7 +2416,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                 return;
             } else {
                 lastError = validation.message;
-                yield `<log>task="Validation failed: ${lastError}"</log>`;
+                yield `<log>task="Syntax validation failed: ${lastError}"</log>`;
                 messages.push({
                     role: 'user',
                     content: `The generated Prolog code failed to initialize with this error:\n${lastError}\n\nPlease fix the issues and regenerate ONLY corrected Prolog code inside a single \`\`\`prolog block. Do not add explanations outside the block.`
@@ -2042,6 +2512,13 @@ export function getGlobalTools() {
         console.log("Warning: Global tools not initialized, returning default tools");
         return [];
     }
+}
+
+/**
+ * Get MCP tool names
+ */
+export function getMcpToolNames() {
+    return Object.keys(MCP_TOOL_MAP);
 }
 
 /**
@@ -2536,6 +3013,37 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                                 cmdline:send_input_to_engine('${engineId}', EvalResult)
                             `, {EvalResult: evalResult}).once();
 
+                        } else if (func === 'agentLoop') {
+
+                            console.log('agentLoop function invoked from Prolog');
+
+                            
+                            const prompt = args[0];
+                            const resultTerm = args[1].toString();
+                            const options = args[2] || {};
+                            const variableNames = args[3] || [];
+
+                            writeLog(`agentLoop invoked with prompt=${prompt}`);
+
+                            const agentGen = agentLoop(prompt, resultTerm, options, sessionId, abortSignal, dmlCode);
+                            let agentResult = null;
+                            for await (const part of agentGen) {
+                                if (typeof part === 'string') {
+                                    writeLog(`agentLoop stream: ${part.replace(/\n/g, ' ')}`);
+                                    yield part; // Stream agent text directly
+                                } else if (part && typeof part === 'object' && part.result_term !== undefined) {
+                                    agentResult = part;
+                                }
+                            }
+
+                            writeLog(`agentLoop result: ${agentResult ? JSON.stringify(agentResult) : 'null'}`);
+
+                            console.log(`agentLoop completed, sending result back to Prolog: ${JSON.stringify(agentResult)}`);
+
+                            await swipl.prolog.query(`
+                                cmdline:send_input_to_engine('${engineId}', AgentResult)
+                            `, {AgentResult: agentResult}).once();
+
                         } else if (func === 'get_tools_description') {
                             let toolsDesc = getToolsDescription();
                             await swipl.prolog.query(`
@@ -2773,6 +3281,7 @@ export default {
     richPrint,
     getToolsDescription,
     getGlobalTools,
+    getMcpToolNames,
     init,
     runDmlAsync,
     runDmlSync,

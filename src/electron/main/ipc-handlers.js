@@ -716,6 +716,44 @@ export function setupIpcHandlers(workspaceManager) {
     }
   });
 
+  // Get available tools (including MCP tools)
+  ipcMain.handle('get-available-tools', async () => {
+    try {
+      // Import bridge module to access both regular tools and MCP tools
+      const bridge = await import('../../dml-js/bridge.js');
+      
+      // Get default tools from buildAiTools
+      const { buildAiTools } = await import('../../dml-js/tools.js');
+      const aiTools = await buildAiTools(null, null);
+      
+      const toolNamesSet = new Set();
+      
+      // Add from buildAiTools (default tools configured in settings)
+      Object.keys(aiTools).forEach(name => {
+        if (name) {
+          toolNamesSet.add(name);
+        }
+      });
+      
+      // Add MCP tools
+      const mcpToolNames = bridge.getMcpToolNames();
+      mcpToolNames.forEach(name => {
+        if (name) {
+          toolNamesSet.add(name);
+        }
+      });
+      
+      const toolNames = Array.from(toolNamesSet).sort();
+      
+      console.log(`[get-available-tools] Found ${toolNames.length} tools (${mcpToolNames.length} from MCP):`, toolNames);
+      
+      return { success: true, tools: toolNames };
+    } catch (error) {
+      console.error('Failed to get available tools:', error);
+      return { success: false, error: error.message, tools: [] };
+    }
+  });
+
   // Serial console handlers for v86 VM
   ipcMain.handle('connect-serial-console', async () => {
     try {

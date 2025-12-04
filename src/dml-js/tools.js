@@ -21,6 +21,28 @@ import { truncate } from 'node:fs';
 // Import model configuration
 import { getAgentModelConfig, resolveProvider } from '../config/models.js';
 
+// Dynamic import for Electron and Turndown (only available in Electron context)
+let BrowserWindow = null;
+let TurndownService = null;
+
+// Try to import Electron BrowserWindow if running in Electron
+try {
+    const electron = await import('electron');
+    BrowserWindow = electron.BrowserWindow;
+    console.log('[tools.js] Successfully imported Electron BrowserWindow');
+} catch (e) {
+    console.log('[tools.js] Not in Electron context, BrowserWindow unavailable:', e.message);
+}
+
+// Try to import Turndown
+try {
+    const turndown = await import('turndown');
+    TurndownService = turndown.default;
+    console.log('[tools.js] Successfully imported Turndown');
+} catch (e) {
+    console.log('[tools.js] Turndown not available, HTML to Markdown conversion disabled:', e.message);
+}
+
 // Provider map for resolving model providers
 
 const providerMap = {
@@ -1052,62 +1074,199 @@ class VisitWebpageTool extends Tool {
     }
 
     async forward(url, truncate_length = null) {
+        console.log(`[VisitWebpageTool] Starting to visit: ${url}`);
         this.streamProgress(`🌐 Visiting webpage: ${url}...`);
         
         // Use the provided truncate_length parameter, or fall back to maxOutputLength
         const maxLength = truncate_length !== null ? truncate_length : this.maxOutputLength;
+        console.log(`[VisitWebpageTool] Max length: ${maxLength}`);
         
         try {
-            const serpUrl = "https://scrape.serper.dev";
-            const apiKey = process.env.SERPER_API_KEY;
-            
-            if (!apiKey) {
-                throw new Error("Missing API key. Make sure you have 'SERPER_API_KEY' in your env variables.");
+            // Use Electron BrowserWindow if available
+            if (BrowserWindow) {
+                console.log('[VisitWebpageTool] Using Electron BrowserWindow method');
+                return await this.fetchWithElectron(url, maxLength);
+            } else {
+                console.log('[VisitWebpageTool] BrowserWindow not available, using Serper fallback');
+                // Fallback to Serper API
+                return await this.fetchWithSerper(url, maxLength);
             }
-
-            const payload = {
-                url: url,
-                includeMarkdown: true,
-                num: 25
-            };
-
-            this.streamProgress(`📄 Scraping page content...`);
-            
-            const response = await fetch(serpUrl, {
-                method: 'POST',
-                headers: {
-                    'X-API-KEY': apiKey,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const res = await response.json();
-            const title = res.metadata?.title || "No title found";
-
-            this.streamProgress(`✅ Page content retrieved.`);
-            return `URL: ${url}\nTitle: ${title}\nText: ${truncateContent(res.markdown, maxLength)}`;
         } catch (error) {
-
-            // try to download the raw HTML as a fallback
+            console.error("[VisitWebpageTool] Error visiting webpage:", error);
+            console.error("[VisitWebpageTool] Error stack:", error.stack);
+            
+            // Final fallback: try to download the raw HTML
             try {
+                console.log('[VisitWebpageTool] Attempting final fallback with fetch');
                 const fallbackResponse = await fetch(url);
                 if (fallbackResponse.ok) {
                     const htmlContent = await fallbackResponse.text();
+                    console.log(`[VisitWebpageTool] Fallback successful, HTML length: ${htmlContent.length}`);
                     this.streamProgress(`✅ Fallback content retrieved.`);
-
                     return `${truncateContent(htmlContent, maxLength)}`;
                 }
+                console.error(`[VisitWebpageTool] Fallback fetch failed with status: ${fallbackResponse.status}`);
             } catch (fallbackError) {
-                console.error("Fallback failed:", fallbackError);
+                console.error("[VisitWebpageTool] Fallback failed:", fallbackError);
             }
 
-            return "Error reading URL.";
+            return `Error reading URL: ${error.message}`;
         }
+    }
+
+    async fetchWithElectron(url, maxLength) {
+        console.log('[VisitWebpageTool] fetchWithElectron: Starting');
+        this.streamProgress(`🖥️ Loading webpage with Electron...`);
+        
+        let window = null;
+        try {
+            console.log('[VisitWebpageTool] Creating BrowserWindow...');
+            this.streamProgress(`🔧 Creating browser instance...`);
+            
+            window = new BrowserWindow({
+                show: false,
+                width: 1600,
+                height: 1200,
+                webPreferences: {
+                    webSecurity: false,
+                    offscreen: true, // Use offscreen rendering to avoid interference
+                },
+                skipTaskbar: true,
+                focusable: false,
+            });
+            
+            // Prevent interference with main window
+            window.setIgnoreMouseEvents(true);
+            console.log('[VisitWebpageTool] BrowserWindow created successfully');
+
+            console.log(`[VisitWebpageTool] Loading URL: ${url}`);
+            this.streamProgress(`🌐 Loading ${url}...`);
+            
+            await window.loadURL(url);
+            console.log('[VisitWebpageTool] URL loaded successfully');
+            
+            this.streamProgress(`✅ Page loaded, waiting for JavaScript (5s)...`);
+            
+            console.log('[VisitWebpageTool] Waiting 5 seconds for JavaScript execution...');
+            // Give the page time to run JavaScript (important for SPAs)
+            await setTimeout(5000);
+            console.log('[VisitWebpageTool] Wait completed');
+
+            this.streamProgress(`📄 Extracting page content...`);
+            
+            console.log('[VisitWebpageTool] Executing JavaScript to get HTML...');
+            const html = await window.webContents.executeJavaScript(
+                'document.documentElement.innerHTML'
+            );
+            console.log(`[VisitWebpageTool] HTML extracted, length: ${html?.length || 0}`);
+
+            // Get page title
+            console.log('[VisitWebpageTool] Executing JavaScript to get title...');
+            const title = await window.webContents.executeJavaScript(
+                'document.title'
+            );
+            console.log(`[VisitWebpageTool] Title extracted: ${title}`);
+            
+            this.streamProgress(`📝 Extracted: "${title}"`);
+
+            // Convert HTML to Markdown if Turndown is available
+            let content;
+            if (TurndownService) {
+                console.log('[VisitWebpageTool] Converting HTML to Markdown with Turndown...');
+                this.streamProgress(`🔄 Converting HTML to Markdown...`);
+                
+                const turndownService = new TurndownService({
+                    headingStyle: 'atx',
+                    codeBlockStyle: 'fenced',
+                });
+                
+                // Remove style tags and their content
+                turndownService.remove(['style', 'script', 'noscript', 'iframe']);
+                
+                // Add rule to strip all style and class attributes
+                turndownService.addRule('removeStyleAttributes', {
+                    filter: function (node) {
+                        return node.hasAttribute('style') || node.hasAttribute('class');
+                    },
+                    replacement: function (content, node) {
+                        // Remove style and class attributes but keep the element
+                        node.removeAttribute('style');
+                        node.removeAttribute('class');
+                        return content;
+                    }
+                });
+                
+                content = turndownService.turndown(html);
+                console.log(`[VisitWebpageTool] Markdown conversion complete, length: ${content.length}`);
+                this.streamProgress(`✅ Converted to Markdown (${Math.round(content.length / 1024)}KB)`);
+            } else {
+                console.log('[VisitWebpageTool] TurndownService not available, using raw HTML');
+                content = html;
+                this.streamProgress(`✅ HTML content retrieved (${Math.round(content.length / 1024)}KB)`);
+            }
+
+            const result = `URL: ${url}\nTitle: ${title}\n\n${truncateContent(content, maxLength)}`;
+            console.log(`[VisitWebpageTool] Final result length: ${result.length}`);
+            this.streamProgress(`✅ Page content ready`);
+            return result;
+        } catch (error) {
+            console.error('[VisitWebpageTool] Error in fetchWithElectron:', error);
+            this.streamProgress(`❌ Failed to fetch webpage: ${error.message}`);
+            throw error;
+        } finally {
+            // Always clean up the window
+            if (window && !window.isDestroyed()) {
+                window.destroy();
+                console.log('[VisitWebpageTool] BrowserWindow destroyed');
+            }
+        }
+    }
+
+    async fetchWithSerper(url, maxLength) {
+        console.log('[VisitWebpageTool] fetchWithSerper: Starting');
+        const serpUrl = "https://scrape.serper.dev";
+        const apiKey = process.env.SERPER_API_KEY;
+        
+        if (!apiKey) {
+            console.error('[VisitWebpageTool] SERPER_API_KEY not found in environment');
+            throw new Error("Missing API key. Make sure you have 'SERPER_API_KEY' in your env variables.");
+        }
+        console.log('[VisitWebpageTool] SERPER_API_KEY found');
+
+        const payload = {
+            url: url,
+            includeMarkdown: true,
+            num: 25
+        };
+        console.log('[VisitWebpageTool] Serper payload:', JSON.stringify(payload, null, 2));
+
+        this.streamProgress(`📄 Scraping page content...`);
+        console.log(`[VisitWebpageTool] Calling Serper API at ${serpUrl}...`);
+        
+        const response = await fetch(serpUrl, {
+            method: 'POST',
+            headers: {
+                'X-API-KEY': apiKey,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        console.log(`[VisitWebpageTool] Serper API response status: ${response.status}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[VisitWebpageTool] Serper API error response: ${errorText}`);
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const res = await response.json();
+        console.log('[VisitWebpageTool] Serper API response keys:', Object.keys(res));
+        const title = res.metadata?.title || "No title found";
+        console.log(`[VisitWebpageTool] Page title: ${title}`);
+        console.log(`[VisitWebpageTool] Markdown length: ${res.markdown?.length || 0}`);
+
+        this.streamProgress(`✅ Page content retrieved.`);
+        return `URL: ${url}\nTitle: ${title}\nText: ${truncateContent(res.markdown, maxLength)}`;
     }
 }
 

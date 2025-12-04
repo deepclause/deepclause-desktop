@@ -187,6 +187,11 @@ export interface ElectronAPI {
   getSettings: () => Promise<any>;
   saveSettings: (settings: any) => Promise<void>;
   reloadMcpServers: () => Promise<void>;
+  getAvailableTools: () => Promise<{
+    success: boolean;
+    tools?: string[];
+    error?: string;
+  }>;
 
   // Serial console operations
   connectSerialConsole: () => Promise<void>;

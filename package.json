@@ -29,6 +29,8 @@
     "@modelcontextprotocol/sdk": "^1.18.2",
     "@monaco-editor/react": "^4.7.0",
     "@openrouter/ai-sdk-provider": "^1.2.0",
+    "@wasmer/sdk": "^0.10.0",
+    "@wasmer/wasi": "^1.2.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "ai": "^5.0.48",
@@ -45,6 +47,7 @@
     "react-markdown": "^9.1.0",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.0",
+    "turndown": "^7.2.2",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
