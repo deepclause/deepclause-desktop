@@ -118,7 +118,7 @@ While this project is still at an early stage, several key design principles dis
 
 - Very early pre-release binaries of the Desktop App for Mac OS (Arm), Linux x86-64 and Windows are available in the releases section.
 
-- We are releasing the core Prolog code that runs the DML execution engine only in binary form for now. Depending on future developments we might opt to release its source code as well.
+- Core Prolog code is a mess :-)
 
 - Known bugs and issues:
     - Aborting a running DML execution / agent session does not always work

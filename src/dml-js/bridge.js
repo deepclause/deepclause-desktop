@@ -2704,6 +2704,29 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
             } 
             writeLog('Loaded Prolog modules.');
 
+            if (process.env.DML_DEV_MODE) {
+                try {
+                    writeLog('DML_DEV_MODE is true, saving current Prolog state to mi.qsave');
+                   
+                    const saveResult = await swipl.prolog.query("qsave_program('mi.qsave', [autoload(true), verbose(true)]).    ").next();
+                    writeLog('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
+                    console.log('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
+                    
+                    const miData = swipl.FS.readFile('mi.qsave');
+                    fs.writeFileSync('src/electron/initial_workspace/mi.qsave', miData);
+
+                    writeLog('Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
+                    console.log('DML_DEV_MODE: Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
+
+                } catch (e) {
+                    const msg = `Error saving Prolog state to src/electron/initial_workspace/mi.qsave: ${e.message}\n`;
+                    writeLog(msg);
+                    console.log(msg);
+                    yield msg;
+                    return;
+                }
+            }
+
             // Initialize cooperative execution engine using SWIPL
             const initQuery = `
                 use_module(library(readutil)),
@@ -2742,28 +2765,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
             yield "<log>DML engine initialized, starting cooperative execution...</log>\n";
             writeLog("DML engine initialized.");
 
-            if (process.env.DML_DEV_MODE) {
-                try {
-                    writeLog('DML_DEV_MODE is true, saving current Prolog state to mi.qsave');
-                   
-                    const saveResult = await swipl.prolog.query("qsave_program('mi.qsave', [autoload(true), verbose(true)]).    ").next();
-                    writeLog('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
-                    console.log('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
-                    
-                    const miData = swipl.FS.readFile('mi.qsave');
-                    fs.writeFileSync('src/electron/initial_workspace/mi.qsave', miData);
 
-                    writeLog('Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
-                    console.log('DML_DEV_MODE: Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
-
-                } catch (e) {
-                    const msg = `Error saving Prolog state to src/electron/initial_workspace/mi.qsave: ${e.message}\n`;
-                    writeLog(msg);
-                    console.log(msg);
-                    yield msg;
-                    return;
-                }
-            }
 
             // Main cooperative loop
             let iteration = 0;
