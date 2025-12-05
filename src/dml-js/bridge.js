@@ -2740,6 +2740,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                 use_module(library(dicts)),
                 use_module(library(sort)),
                 use_module(library(dcg/basics)),
+                use_module(library(pcre)),
     
                 readutil:read_file_to_string('${tempFile}', DMLCode, []),
                 writeln("Read code"),
