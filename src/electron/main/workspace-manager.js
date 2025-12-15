@@ -96,10 +96,16 @@ export class WorkspaceManager {
     // Copy config if it doesn't exist
     const sourceConfig = resolver ? resolver.resolve('config') : path.join(resourcesPath, 'config');
     if (fs.existsSync(sourceConfig)) {
-      // Copy settings.json to home directory config
+      // Copy settings.json directly to ~/.deepclause/settings.json (not in config subdirectory)
       const settingsSource = path.join(sourceConfig, 'settings.json');
-      const settingsDest = path.join(configPath, 'settings.json');
-      if (fs.existsSync(settingsSource) && !fs.existsSync(settingsDest)) {
+      const settingsDest = path.join(this.deepClauseDir, 'settings.json');
+      const oldSettingsDest = path.join(configPath, 'settings.json'); // Old location for migration
+      
+      // Migrate existing settings from old location if needed
+      if (fs.existsSync(oldSettingsDest) && !fs.existsSync(settingsDest)) {
+        fs.copyFileSync(oldSettingsDest, settingsDest);
+        console.log(`Migrated settings.json from ${oldSettingsDest} to ${settingsDest}`);
+      } else if (fs.existsSync(settingsSource) && !fs.existsSync(settingsDest)) {
         fs.copyFileSync(settingsSource, settingsDest);
         console.log(`Copied settings.json from ${settingsSource} to ${settingsDest}`);
       }
@@ -110,6 +116,21 @@ export class WorkspaceManager {
       if (fs.existsSync(playwrightSource) && !fs.existsSync(playwrightDest)) {
         fs.copyFileSync(playwrightSource, playwrightDest);
         console.log(`Copied playwright.json from ${playwrightSource} to ${playwrightDest}`);
+      }
+    }
+
+    // Copy mi.qsave to global ~/.deepclause directory if it doesn't exist
+    const globalMiQsavePath = path.join(this.deepClauseDir, 'mi.qsave');
+    if (!fs.existsSync(globalMiQsavePath)) {
+      const sourceMiQsave = resolver?.isDev
+        ? path.join(resolver.resourcesPath, 'src/electron/initial_workspace/mi.qsave')
+        : (resolver ? resolver.resolve('initial_workspace/mi.qsave') : path.join(resourcesPath, 'initial_workspace/mi.qsave'));
+      
+      if (fs.existsSync(sourceMiQsave)) {
+        fs.copyFileSync(sourceMiQsave, globalMiQsavePath);
+        console.log(`Copied mi.qsave from ${sourceMiQsave} to ${globalMiQsavePath}`);
+      } else {
+        console.warn(`Warning: mi.qsave not found at ${sourceMiQsave}. DML execution may not work in production mode.`);
       }
     }
 
@@ -129,7 +150,8 @@ All files in this folder are accessible to your DML programs.
 - **${this.deepClauseDir}**: Main DeepClause directory
   - **workspace/**: Your working files (this directory)
   - **dml_examples/**: Example DML scripts
-  - **config/**: Configuration files (settings.json, playwright.json)
+  - **settings.json**: Configuration file (API keys, models, MCP servers)
+  - **config/**: Additional configuration files (playwright.json, etc.)
 
 ## Getting Started
 
@@ -191,7 +213,8 @@ Happy coding! 🚀
   }
 
   getSettingsPath() {
-    return path.join(this.configPath, 'settings.json');
+    // Use ~/.deepclause/settings.json (same path as CLI for consistency)
+    return path.join(this.deepClauseDir, 'settings.json');
   }
 
   async cleanup() {

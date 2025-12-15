@@ -34,6 +34,12 @@ function getAgentConfig() {
     return { name: agentModelConfig.name, temperature: agentModelConfig.temperature };
 }
 
+const debugLog = (...args) => {
+    if (process.env.DEBUG === '1') {
+        console.log(...args);
+    }
+};
+
 
 const providerMap = {
     google: (m) => {
@@ -42,7 +48,7 @@ const providerMap = {
     },
     openai: (m) => {
 
-        console.log(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
+        debugLog(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
 
         // Accept either a model string or an object { model, baseURL }
         const model = (m && typeof m === 'object') ? m.name : m;
@@ -54,7 +60,7 @@ const providerMap = {
             if (!process.env.OPENAI_BASE_URL)
                  process.env.OPENAI_BASE_URL = base;
         }
-        console.log(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
+        debugLog(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
         const provider = createOpenAICompatible({name: "provider", baseURL: base, apiKey: process.env.OPENAI_API_KEY});
         return provider(model)
     },
@@ -73,13 +79,13 @@ const providerMap = {
 // These are now functions to allow dynamic reloading when settings change
 function getCurrentGoalModelConfig() {
     const config = getGoalModelConfig();
-    console.log(`[Bridge] Goal Model: ${config.provider}/${config.name} (API Key present: ${!!(process.env.OPENAI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.ANTHROPIC_API_KEY)})`);
+    debugLog(`[Bridge] Goal Model: ${config.provider}/${config.name} (API Key present: ${!!(process.env.OPENAI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.ANTHROPIC_API_KEY)})`);
     return config;
 }
 
 function getCurrentConverterModelConfig() {
     const config = getConverterModelConfig();
-    console.log(`[Bridge] Converter Model: ${config.provider}/${config.name}`);
+    debugLog(`[Bridge] Converter Model: ${config.provider}/${config.name}`);
     return config;
 }
 
@@ -95,6 +101,7 @@ let GLOBAL_TOOLS_DESCRIPTION= "";
 let MCP_CLIENTS = [];
 let MCP_TOOL_MAP = {};
 let MCP_CONFIG_PATH = null; // Will be set lazily
+let INITIALIZED = false; // Guard against double initialization
 
 /**
  * Get MCP config path - handles both Electron and CLI modes
@@ -106,20 +113,29 @@ function getMcpConfigPath() {
     
     const resolver = getResourceResolver();
     
+    // Both Electron and CLI use the same settings path: ~/.deepclause/settings.json
+    const globalSettings = path.join(os.homedir(), '.deepclause', 'settings.json');
+    
     if (resolver) {
-        // Electron mode - use ~/.deepclause/config/settings.json
-        MCP_CONFIG_PATH = path.join(os.homedir(), '.deepclause', 'config', 'settings.json');
-        console.log(`[MCP] Using Electron config path: ${MCP_CONFIG_PATH}`);
+        // Electron mode
+        MCP_CONFIG_PATH = globalSettings;
+        debugLog(`[MCP] Using Electron config path: ${MCP_CONFIG_PATH}`);
     } else {
-        // CLI mode - use project config
-        // First check if settings.json exists in the ../config directory (deployed mode)
-        const localSettings = path.join(__dirname, '..', 'config', 'settings.json');
-        if (fs.existsSync(localSettings)) {
-            MCP_CONFIG_PATH = localSettings;
-            console.log(`[MCP] Using local settings path: ${MCP_CONFIG_PATH}`);
+        // CLI mode
+        if (fs.existsSync(globalSettings)) {
+            MCP_CONFIG_PATH = globalSettings;
+            debugLog(`[MCP] Using global CLI settings path: ${MCP_CONFIG_PATH}`);
         } else {
-            MCP_CONFIG_PATH = path.resolve(process.cwd(), 'config', 'settings.json');
-            console.log(`[MCP] Using CLI config path: ${MCP_CONFIG_PATH}`);
+            // Fallback: check if settings.json exists in the ../config directory (deployed mode)
+            const localSettings = path.join(__dirname, '..', 'config', 'settings.json');
+            if (fs.existsSync(localSettings)) {
+                MCP_CONFIG_PATH = localSettings;
+                debugLog(`[MCP] Using local settings path: ${MCP_CONFIG_PATH}`);
+            } else {
+                // Last fallback: project config directory
+                MCP_CONFIG_PATH = path.resolve(process.cwd(), 'config', 'settings.json');
+                debugLog(`[MCP] Using fallback CLI config path: ${MCP_CONFIG_PATH}`);
+            }
         }
     }
     
@@ -827,11 +843,11 @@ Analyze this code thoroughly and determine if it is VALID or INVALID.`;
         }
         
         // Unexpected format - treat as invalid
-        console.warn('Unexpected validation response format:', response);
+        debugLog('Unexpected validation response format:', response);
         return { valid: false, issues: ['Validation returned unexpected format: ' + response] };
         
     } catch (error) {
-        console.error('Code validation failed:', error);
+        debugLog('Code validation failed:', error);
         // Don't fail the whole process, just skip validation
         return { valid: true, issues: [] };
     }
@@ -1036,7 +1052,7 @@ async function validateTermsWithProlog(swipl, response) {
                 } else if (correctedTerm.corrected) {
                     // Update the assignment with the corrected term
                     assignment[arg] = correctedTerm.term;
-                    console.log(`Auto-corrected term for var ${arg}: ${termRaw} -> ${correctedTerm.term}`);
+                    debugLog(`Auto-corrected term for var ${arg}: ${termRaw} -> ${correctedTerm.term}`);
                 }
             }
         }
@@ -1094,7 +1110,7 @@ async function validateAndCorrectTerm(swipl, termRaw, varName, maxAttempts = 2) 
             
             if (result && result.error) {
                 const errorMsg = result.error.toString();
-                console.log(`Prolog parse error for term '${term}' (var ${varName}): ${errorMsg}`);
+                debugLog(`Prolog parse error for term '${term}' (var ${varName}): ${errorMsg}`);
 
                 //if debug is activated copy the tmp file to /workspace for inspection
                 if(process.env.DEBUG){
@@ -1102,21 +1118,21 @@ async function validateAndCorrectTerm(swipl, termRaw, varName, maxAttempts = 2) 
                         const debugPath = `validate_${Date.now()}_${Math.random().toString(36).slice(2)}.pl`;
                         const fileContent = swipl.FS.readFile(tmpPath);
                         fs.writeFileSync(debugPath, fileContent);
-                        console.log(`Debug: Copied invalid term file to: ${debugPath}`);
+                        debugLog(`Debug: Copied invalid term file to: ${debugPath}`);
                     } catch (copyErr) {
-                        console.log(`Debug: Failed to copy invalid term file to workspace: ${copyErr.message}`);
+                        debugLog(`Debug: Failed to copy invalid term file to workspace: ${copyErr.message}`);
                     }
                 }
                 
                 // If this is not the last attempt, try to correct with LLM
                 if (attempt < maxAttempts - 1) {
-                    console.log(`Attempting LLM correction for term (attempt ${attempt + 1}/${maxAttempts})...`);
+                    debugLog(`Attempting LLM correction for term (attempt ${attempt + 1}/${maxAttempts})...`);
                     const corrected = await correctTermWithLLM(term, errorMsg, varName);
                     
                     if (corrected) {
                         term = corrected;
                         if (!term.endsWith('.')) term += '.';
-                        console.log(`LLM suggested correction: ${corrected}`);
+                        debugLog(`LLM suggested correction: ${corrected}`);
                         // Continue loop to validate the corrected term
                         try { swipl.FS.unlink(tmpPath); } catch (_) {}
                         continue;
@@ -1133,17 +1149,17 @@ async function validateAndCorrectTerm(swipl, termRaw, varName, maxAttempts = 2) 
             
         } catch (parseErr) {
             const errorMsg = parseErr.message;
-            console.log(`Prolog parse exception for term '${term}' (var ${varName}): ${errorMsg}`);
+            debugLog(`Prolog parse exception for term '${term}' (var ${varName}): ${errorMsg}`);
             
             // If this is not the last attempt, try to correct with LLM
             if (attempt < maxAttempts - 1) {
-                console.log(`Attempting LLM correction for term (attempt ${attempt + 1}/${maxAttempts})...`);
+                debugLog(`Attempting LLM correction for term (attempt ${attempt + 1}/${maxAttempts})...`);
                 const corrected = await correctTermWithLLM(term, errorMsg, varName);
                 
                 if (corrected) {
                     term = corrected;
                     if (!term.endsWith('.')) term += '.';
-                    console.log(`LLM suggested correction: ${corrected}`);
+                    debugLog(`LLM suggested correction: ${corrected}`);
                     // Continue loop to validate the corrected term
                     try { swipl.FS.unlink(tmpPath); } catch (_) {}
                     continue;
@@ -1207,7 +1223,7 @@ Return ONLY the corrected term in valid Prolog syntax.`;
         return corrected || null;
         
     } catch (error) {
-        console.log(`LLM correction failed: ${error.message}`);
+        debugLog(`LLM correction failed: ${error.message}`);
         return null;
     }
 }
@@ -1284,6 +1300,55 @@ export async function* toolAgent(task, attempt, messages, session, mcpServers, a
         // Merge MCP tools (without wrapping, as they don't have progress callbacks)
         const aiTools = { ...wrappedTools, ...MCP_TOOL_MAP };
 
+        // Check if task matches a tool name exactly (before the opening parenthesis)
+        const taskStr = String(task ?? '');
+        const parenIndex = taskStr.indexOf('(');
+        // if (parenIndex > 0) {
+        //     const potentialToolName = taskStr.substring(0, parenIndex).trim();
+        //     if (aiTools[potentialToolName]) {
+        //         // Direct tool execution without LLM
+        //         debugLog(`Direct tool match found: ${potentialToolName}`);
+                
+        //         // Parse arguments from task string (content between parentheses)
+        //         let argsStr = taskStr.substring(parenIndex + 1);
+        //         if (argsStr.endsWith(')')) {
+        //             argsStr = argsStr.slice(0, -1);
+        //         }
+                
+        //         // Try to parse as JSON first, otherwise treat as single string argument
+        //         let args = {};
+        //         try {
+        //             args = JSON.parse(argsStr);
+        //         } catch {
+        //             // If not valid JSON, treat as a query string for search-like tools
+        //             if (argsStr.trim()) {
+        //                 args = { query: argsStr.trim() };
+        //             }
+        //         }
+                
+        //         const toolDef = aiTools[potentialToolName];
+        //         if (typeof toolDef.execute === 'function') {
+        //             debugLog(`Executing tool ${potentialToolName} directly with args:`, args);
+        //             const resultValue = await toolDef.execute(args);
+                    
+        //             // Flush any messages generated during execution
+        //             while (messageQueue.length > 0) {
+        //                 const msg = messageQueue.shift();
+        //                 yield `<log>${msg}</log>\n`;
+        //             }
+                    
+        //             const printable = typeof resultValue === 'string' ? resultValue : JSON.stringify(resultValue, null, 2);
+                    
+        //             yield `\n<tool-output tool="${potentialToolName}">\n`;
+        //             yield printable;
+        //             yield `\n</tool-output>\n\n`;
+                    
+        //             yield { tool_output: printable, success: true };
+        //             return;
+        //         }
+        //     }
+        // }
+
         const today = new Date().toISOString().split('T')[0];
         const system = [
             `Today is ${today}.`,
@@ -1347,7 +1412,7 @@ export async function* toolAgent(task, attempt, messages, session, mcpServers, a
                 throw new Error(`Tool "${toolName}" is not executable`);
             }
 
-            console.log(`Executing tool ${toolName} with args:`, call.args || call.arguments || {});
+            debugLog(`Executing tool ${toolName} with args:`, call.args || call.arguments || {});
             resultValue = await toolDef.execute(call.args || call.arguments || {});
             
             // Flush any messages generated during manual execution
@@ -1473,7 +1538,7 @@ If you cannot complete the task with the available tools, do not guess. Return a
 5. Formulate the final response to the Supervisor and call the final_answer tool.`
         ].join('\n');
 
-        console.log('agent_loop system prompt:', system)
+        debugLog('agent_loop system prompt:', system)
 
         const goalConfig = getCurrentGoalModelConfig();
         
@@ -1855,7 +1920,7 @@ Remember:
                 yield `\n`; // Add newline after streaming
 
                 if (process.env.DEBUG) {
-                    console.log('Goal eval raw output:', fullText);
+                    debugLog('Goal eval raw output:', fullText);
                 }
 
                 // Parse the output based on whether we have unbound variables
@@ -1945,7 +2010,7 @@ Remember:
                         const correctedTerm = await validateAndCorrectTerm(swipl, termStr, 'goal_term');
                         
                         if (correctedTerm.error) {
-                            console.warn(`Term validation failed: ${correctedTerm.error}`);
+                            debugLog(`Term validation failed: ${correctedTerm.error}`);
                             continue; // Skip invalid terms
                         }
                         
@@ -1962,7 +2027,7 @@ Remember:
                 break; // Success!
 
             } catch (error) {
-                console.log(error);
+                debugLog(error);
                 errors.push(error.message || String(error));
 
                 if (attempt == maxAttempts - 1) {
@@ -1970,7 +2035,7 @@ Remember:
                     break;
                 } else {
                     if (process.env.DEBUG) {
-                        console.log(`Goal eval attempt ${attempt + 1} failed:`, error);
+                        debugLog(`Goal eval attempt ${attempt + 1} failed:`, error);
                     }
                     yield `\n<log>Attempt ${attempt + 1} failed: ${error.message}</log>\n`;
                     yield '<log>Retrying...</log>\n\n';
@@ -2006,7 +2071,7 @@ Remember:
                 const closeParen = termStr.lastIndexOf(')');
                 
                 if (openParen === -1 || closeParen === -1) {
-                    console.warn(`Invalid term format: ${termStr}`);
+                    debugLog(`Invalid term format: ${termStr}`);
                     continue;
                 }
 
@@ -2069,11 +2134,11 @@ Remember:
                         newVars.push(args);
                     } else {
                         // Fallback: use the term as-is
-                        console.warn(`Prolog parsing returned no Args, using term as-is: ${termStr}`);
+                        debugLog(`Prolog parsing returned no Args, using term as-is: ${termStr}`);
                         newVars.push([termStr]);
                     }
                 } catch (parseError) {
-                    console.warn(`Failed to parse term with Prolog: ${termStr}`, parseError);
+                    debugLog(`Failed to parse term with Prolog: ${termStr}`, parseError);
                     // On error, use the entire term as a single element
                     newVars.push([termStr]);
                 }
@@ -2089,15 +2154,15 @@ Remember:
             llm_result: ""
         };
 
-        if (process.env.DEBUG) {
-            console.log('Processed goal eval response:', response);
+        if (process.env.DEBUG === '1') {
+            debugLog('Processed goal eval response:', response);
         }
 
         yield '\n<log>Goal evaluation finished.</log>\n';
         yield response;
 
     } catch (error) {
-        console.log('Goal evaluation error:', error);
+        debugLog('Goal evaluation error:', error);
         yield {
             result: false,
             summary: `An error occurred: ${error.message}`,
@@ -2116,7 +2181,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
 
         if (!exampleDir) {
             // Use database examples (would need PostgreSQL implementation)
-            console.log("Using database examples (not implemented in JS version)");
+            debugLog("Using database examples (not implemented in JS version)");
         } else {
             // Read examples from directory
             if (fs.existsSync(exampleDir)) {
@@ -2164,12 +2229,12 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                 searchTool = GLOBAL_TOOLS.find(t => t.name === searchToolName);
             }
             
-            // Fallback: find any search tool or use you_search
+            // Fallback: find any search tool, prefer brave_search
             if (!searchTool && GLOBAL_TOOLS && GLOBAL_TOOLS.length > 0) {
                 searchTool = GLOBAL_TOOLS.find(t => 
-                    t.name === 'you_search' || 
+                    t.name === 'brave_search' || 
                     t.name === 'web_search' || 
-                    t.name === 'brave_search'
+                    t.name === 'you_search'
                 );
             }
             
@@ -2204,7 +2269,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                         }
                     } catch (searchError) {
                         // Log search failure but continue without it
-                        console.warn(`Web search failed: ${searchError.message}`);
+                        debugLog(`Web search failed: ${searchError.message}`);
                         yield `<log>Web search unavailable, proceeding without additional context</log>`;
                     }
                 }
@@ -2213,7 +2278,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
             }
         } catch (e) {
             // Outer catch for configuration errors - don't treat as fatal
-            console.warn(`Search configuration error: ${e.message}`);
+            debugLog(`Search configuration error: ${e.message}`);
             yield `<log>Skipping web search due to configuration issue</log>`;
         }
         // ------------------------------------------------------------
@@ -2387,13 +2452,13 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                 yield `<log>task="Code analysis failed with ${semanticValidation.issues.length} issues"</log>`;
                 
                 // Log issues to console for debugging
-                console.log('\n⚠️  Code Validation Issues Found:');
-                console.log('═'.repeat(80));
+                debugLog('\n⚠️  Code Validation Issues Found:');
+                debugLog('═'.repeat(80));
                 semanticValidation.issues.forEach((issue, idx) => {
-                    console.log(`\nIssue ${idx + 1}:`);
-                    console.log(issue);
+                    debugLog(`\nIssue ${idx + 1}:`);
+                    debugLog(issue);
                 });
-                console.log('═'.repeat(80) + '\n');
+                debugLog('═'.repeat(80) + '\n');
                 
                 // Provide detailed feedback for regeneration
                 messages.push({
@@ -2402,7 +2467,7 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
                 });
                 continue;
             } else {
-                console.log('✅ Code validation passed - no issues found');
+                debugLog('✅ Code validation passed - no issues found');
                 yield `<log>task="Code analysis passed"</log>`;
             }*/
 
@@ -2440,44 +2505,437 @@ export async function* questionToProlog(question, attempt, exampleDir = null, sw
 /**
  * Rich console printing with formatting
  */
-export function richPrint(text) {
+// ANSI color codes for terminal styling
+const ANSI = {
+    reset: '\x1b[0m',
+    bold: '\x1b[1m',
+    dim: '\x1b[2m',
+    italic: '\x1b[3m',
+    underline: '\x1b[4m',
+    // Colors
+    black: '\x1b[30m',
+    red: '\x1b[31m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    blue: '\x1b[34m',
+    magenta: '\x1b[35m',
+    cyan: '\x1b[36m',
+    white: '\x1b[37m',
+    // Bright colors
+    brightBlack: '\x1b[90m',
+    brightRed: '\x1b[91m',
+    brightGreen: '\x1b[92m',
+    brightYellow: '\x1b[93m',
+    brightBlue: '\x1b[94m',
+    brightMagenta: '\x1b[95m',
+    brightCyan: '\x1b[96m',
+    brightWhite: '\x1b[97m',
+    // Background colors
+    bgBlack: '\x1b[40m',
+    bgRed: '\x1b[41m',
+    bgGreen: '\x1b[42m',
+    bgYellow: '\x1b[43m',
+    bgBlue: '\x1b[44m',
+    bgMagenta: '\x1b[45m',
+    bgCyan: '\x1b[46m',
+    bgWhite: '\x1b[47m',
+    // Cursor control
+    clearLine: '\x1b[2K',
+    cursorToStart: '\r',
+    saveCursor: '\x1b[s',
+    restoreCursor: '\x1b[u',
+    hideCursor: '\x1b[?25l',
+    showCursor: '\x1b[?25h',
+};
 
-    marked.use(markedTerminal(/* optional options and highlight options */));
+// Box drawing characters
+const BOX = {
+    topLeft: '╭',
+    topRight: '╮',
+    bottomLeft: '╰',
+    bottomRight: '╯',
+    horizontal: '─',
+    vertical: '│',
+    leftT: '├',
+    rightT: '┤',
+};
+
+// State for single-line streaming mode
+let isInDmlExecution = false;
+let lastStreamLine = '';
+
+// State for accumulating tool output across streamed chunks
+let isAccumulatingToolOutput = false;
+let accumulatedToolOutput = '';
+let accumulatedToolName = '';
+
+// State for accumulating reasoning across streamed chunks
+let isAccumulatingReasoning = false;
+let accumulatedReasoning = '';
+
+// State for buffering streamed text to avoid fragmented output
+let streamBuffer = '';
+let streamFlushTimer = null;
+const STREAM_FLUSH_DELAY = 50; // ms to wait before flushing buffer
+
+/**
+ * Flush the stream buffer to stdout
+ */
+function flushStreamBuffer() {
+    if (streamFlushTimer) {
+        clearTimeout(streamFlushTimer);
+        streamFlushTimer = null;
+    }
+    if (streamBuffer) {
+        process.stdout.write(streamBuffer);
+        streamBuffer = '';
+    }
+}
+
+/**
+ * Add text to stream buffer with debounced flush
+ */
+function bufferStreamText(text) {
+    streamBuffer += text;
+    
+    // Flush immediately if we have a complete sentence or paragraph
+    if (text.match(/[.!?]\s*$/) || text.includes('\n\n') || streamBuffer.length > 300) {
+        flushStreamBuffer();
+        return;
+    }
+    
+    // Otherwise debounce the flush
+    if (streamFlushTimer) {
+        clearTimeout(streamFlushTimer);
+    }
+    streamFlushTimer = setTimeout(flushStreamBuffer, STREAM_FLUSH_DELAY);
+}
+
+/**
+ * Format tool output for display - truncate and clean up
+ */
+function formatToolOutput(content, maxLines = 15, maxLineLength = 100) {
+    const lines = content.split('\n');
+    let result = [];
+    let truncatedLines = 0;
+    
+    for (let i = 0; i < lines.length && result.length < maxLines; i++) {
+        let line = lines[i];
+        // Truncate long lines
+        if (line.length > maxLineLength) {
+            line = line.substring(0, maxLineLength - 3) + '...';
+        }
+        result.push(line);
+    }
+    
+    if (lines.length > maxLines) {
+        truncatedLines = lines.length - maxLines;
+        result.push(`${ANSI.dim}... ${truncatedLines} more lines${ANSI.reset}`);
+    }
+    
+    return result.join('\n');
+}
+
+/**
+ * Create a compact tool output display
+ */
+function createCompactToolOutput(toolName, content, maxLength = 500) {
+    const termWidth = process.stdout.columns || 80;
+    const displayWidth = Math.min(termWidth - 4, 100);
+    
+    // Truncate content
+    let displayContent = content;
+    let wasTruncated = false;
+    if (content.length > maxLength) {
+        displayContent = content.substring(0, maxLength);
+        wasTruncated = true;
+    }
+    
+    // Format as compact output
+    const formatted = formatToolOutput(displayContent, 12, displayWidth - 4);
+    
+    let result = `\n${ANSI.blue}${ANSI.bold}📤 ${toolName}${ANSI.reset}\n`;
+    result += `${ANSI.dim}${'─'.repeat(Math.min(toolName.length + 4, displayWidth))}${ANSI.reset}\n`;
+    result += `${ANSI.brightBlack}${formatted}${ANSI.reset}\n`;
+    if (wasTruncated) {
+        result += `${ANSI.dim}[truncated ${content.length - maxLength} chars]${ANSI.reset}\n`;
+    }
+    
+    return result;
+}
+
+/**
+ * Write a single-line status update (overwrites previous line)
+ */
+function writeSingleLineStatus(text, prefix = '⚡') {
+    const termWidth = process.stdout.columns || 80;
+    const maxLen = termWidth - 10;
+    
+    // Clean text - remove newlines and truncate
+    let cleanText = text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleanText.length > maxLen) {
+        cleanText = cleanText.substring(0, maxLen - 3) + '...';
+    }
+    
+    // Clear line and write new content
+    process.stdout.write(`${ANSI.clearLine}${ANSI.cursorToStart}${ANSI.yellow}${prefix}${ANSI.reset} ${ANSI.dim}${cleanText}${ANSI.reset}`);
+    lastStreamLine = cleanText;
+}
+
+/**
+ * End single-line streaming mode and move to new line
+ */
+function endSingleLineMode() {
+    // Also flush any pending stream buffer
+    flushStreamBuffer();
+    
+    if (isInDmlExecution) {
+        process.stdout.write('\n');
+        isInDmlExecution = false;
+        lastStreamLine = '';
+    }
+}
+
+/**
+ * Create a styled box around content
+ */
+function createBox(content, { title = '', color = ANSI.cyan, width = null, icon = '' } = {}) {
+    const termWidth = process.stdout.columns || 80;
+    const maxWidth = width || Math.min(termWidth - 4, 100);
+    
+    // Split content into lines and wrap
+    const lines = content.split('\n');
+    const wrappedLines = [];
+    for (const line of lines) {
+        if (line.length <= maxWidth - 4) {
+            wrappedLines.push(line);
+        } else {
+            // Word wrap long lines
+            let remaining = line;
+            while (remaining.length > maxWidth - 4) {
+                let breakPoint = remaining.lastIndexOf(' ', maxWidth - 4);
+                if (breakPoint <= 0) breakPoint = maxWidth - 4;
+                wrappedLines.push(remaining.substring(0, breakPoint));
+                remaining = remaining.substring(breakPoint).trimStart();
+            }
+            if (remaining) wrappedLines.push(remaining);
+        }
+    }
+    
+    // Calculate actual width needed
+    const contentWidth = Math.max(...wrappedLines.map(l => l.length), (title.length + icon.length + 2)) + 2;
+    const boxWidth = Math.min(Math.max(contentWidth + 2, 20), maxWidth);
+    
+    let result = '';
+    
+    // Top border with optional title
+    const titleText = icon ? `${icon} ${title}` : title;
+    if (titleText) {
+        const titlePadded = ` ${titleText} `;
+        const leftPad = 2;
+        const rightPad = Math.max(0, boxWidth - leftPad - titlePadded.length - 2);
+        result += `${color}${BOX.topLeft}${BOX.horizontal.repeat(leftPad)}${ANSI.bold}${titlePadded}${ANSI.reset}${color}${BOX.horizontal.repeat(rightPad)}${BOX.topRight}${ANSI.reset}\n`;
+    } else {
+        result += `${color}${BOX.topLeft}${BOX.horizontal.repeat(boxWidth - 2)}${BOX.topRight}${ANSI.reset}\n`;
+    }
+    
+    // Content lines
+    for (const line of wrappedLines) {
+        const padding = Math.max(0, boxWidth - line.length - 4);
+        result += `${color}${BOX.vertical}${ANSI.reset} ${line}${' '.repeat(padding)} ${color}${BOX.vertical}${ANSI.reset}\n`;
+    }
+    
+    // Bottom border
+    result += `${color}${BOX.bottomLeft}${BOX.horizontal.repeat(boxWidth - 2)}${BOX.bottomRight}${ANSI.reset}\n`;
+    
+    return result;
+}
+
+/**
+ * Create a simple inline badge/tag
+ */
+function createBadge(text, color = ANSI.cyan) {
+    return `${color}${ANSI.bold}[${text}]${ANSI.reset}`;
+}
+
+/**
+ * End single-line streaming mode (exported for use by CLI)
+ */
+export { endSingleLineMode, flushStreamBuffer };
+
+/**
+ * Rich console printing with TUI-style formatting
+ */
+export function richPrint(text) {
+    marked.use(markedTerminal());
     
     try {
-        // Handle special log messages
+        // Handle <log> tags - styled as info badges
         if (text.includes('<log>task=')) {
-            const logText = text.replace(/<log>/g, '').replace(/<\/log>/g, '').replace(/task=/g, '').replace(/"/g, '');
-            console.log(`🔧 Task: ${logText}\n`);
+            endSingleLineMode();
+            const logText = text.replace(/<log>/g, '').replace(/<\/log>/g, '').replace(/task=/g, '').replace(/"/g, '').trim();
+            process.stdout.write(`\n${ANSI.yellow}${ANSI.bold}⚡ TASK${ANSI.reset} ${ANSI.dim}│${ANSI.reset} ${logText}\n`);
             return;
         }
 
         if (text.includes('<log>error=')) {
-            const logText = text.replace(/<log>/g, '').replace(/<\/log>/g, '').replace(/error=/g, '').replace(/"/g, '');
-            console.log(`\n❌ Error: ${logText}\n`);
+            endSingleLineMode();
+            const logText = text.replace(/<log>/g, '').replace(/<\/log>/g, '').replace(/error=/g, '').replace(/"/g, '').trim();
+            process.stdout.write(`\n${ANSI.red}${ANSI.bold}✖ ERROR${ANSI.reset} ${ANSI.dim}│${ANSI.reset} ${logText}\n`);
             return;
         }
 
         if (text.includes('<log>')) {
-            const logText = text.replace(/<log>/g, '').replace(/<\/log>/g, '');
-            console.log(`ℹ️  Info: ${logText}\n`);
+            const logText = text.replace(/<log>/g, '').replace(/<\/log>/g, '').trim();
+            // Check if it's a tool call
+            if (logText.startsWith('Calling tool:')) {
+                endSingleLineMode();
+                const toolName = logText.replace('Calling tool:', '').trim();
+                process.stdout.write(`\n${ANSI.cyan}${ANSI.bold}🔧 TOOL${ANSI.reset} ${ANSI.dim}│${ANSI.reset} ${ANSI.brightCyan}${toolName}${ANSI.reset}\n`);
+            } else {
+                // Use single-line mode for regular log messages during DML execution
+                if (isInDmlExecution) {
+                    writeSingleLineStatus(logText, '▸');
+                } else {
+                    process.stdout.write(`${ANSI.brightBlack}▸${ANSI.reset} ${ANSI.dim}${logText}${ANSI.reset}\n`);
+                }
+            }
             return;
         }
 
+        // Handle <input> tags - user input prompts
         if (text.includes('<input>')) {
-            const logText = text.replace(/<input>/g, '').replace(/<\/input>/g, '');
-            console.log(`\n\n 📝 User Input Required: ${logText}\n`);
+            endSingleLineMode();
+            const inputText = text.replace(/<input>/g, '').replace(/<\/input>/g, '').trim();
+            process.stdout.write(`\n${createBox(inputText, { title: 'INPUT REQUIRED', color: ANSI.yellow, icon: '📝' })}`);
             return;
         }
 
+        // Handle <dml-execution> tags - DML execution notifications - START single-line mode
+        if (text.includes('<dml-execution>')) {
+            endSingleLineMode();
+            const execText = text.replace(/<dml-execution>/g, '').replace(/<\/dml-execution>/g, '').trim();
+            process.stdout.write(`\n${ANSI.green}${ANSI.bold}▶ EXECUTING${ANSI.reset} ${ANSI.dim}│${ANSI.reset} ${ANSI.brightGreen}${execText}${ANSI.reset}\n`);
+            isInDmlExecution = true;
+            return;
+        }
+
+        // Handle <dml-code> tags - show DML code in a nice box
+        if (text.includes('<dml-code>')) {
+            endSingleLineMode();
+            const codeText = text.replace(/<dml-code>/g, '').replace(/<\/dml-code>/g, '').trim();
+            // Extract code from markdown code block if present
+            const codeMatch = codeText.match(/```(?:prolog)?\n?([\s\S]*?)```/);
+            const code = codeMatch ? codeMatch[1].trim() : codeText;
+            process.stdout.write(`\n${createBox(code, { title: 'DML CODE', color: ANSI.magenta, icon: '📜' })}`);
+            return;
+        }
+
+        // Handle <tool-output> tags - show tool output in compact format
+        // First, check if we're starting to accumulate tool output (streaming case)
+        const toolOutputStartMatch = text.match(/<tool-output\s+tool="([^"]+)">/);
+        if (toolOutputStartMatch && !text.includes('</tool-output>')) {
+            // Starting a new tool output accumulation
+            isAccumulatingToolOutput = true;
+            accumulatedToolName = toolOutputStartMatch[1];
+            accumulatedToolOutput = text.replace(/<tool-output\s+tool="[^"]+">\n?/, '');
+            return;
+        }
+        
+        // If we're accumulating and see the end tag, render the complete output
+        if (isAccumulatingToolOutput && text.includes('</tool-output>')) {
+            endSingleLineMode();
+            accumulatedToolOutput += text.replace(/<\/tool-output>\n?/, '');
+            process.stdout.write(createCompactToolOutput(accumulatedToolName, accumulatedToolOutput.trim(), 800));
+            // Reset accumulation state
+            isAccumulatingToolOutput = false;
+            accumulatedToolOutput = '';
+            accumulatedToolName = '';
+            return;
+        }
+        
+        // If we're accumulating, just add to the buffer
+        if (isAccumulatingToolOutput) {
+            accumulatedToolOutput += text;
+            return;
+        }
+        
+        // Handle complete <tool-output> tags in a single chunk (non-streaming case)
+        const toolOutputMatch = text.match(/<tool-output\s+tool="([^"]+)">([\s\S]*?)<\/tool-output>/);
+        if (toolOutputMatch) {
+            endSingleLineMode();
+            const toolName = toolOutputMatch[1];
+            const toolOutput = toolOutputMatch[2].trim();
+            process.stdout.write(createCompactToolOutput(toolName, toolOutput, 800));
+            return;
+        }
+
+        // Handle <reasoning> tags - stream on single line with accumulation
+        // Check for opening tag (start accumulating)
+        const reasoningOpenMatch = text.match(/<reasoning>([\s\S]*)$/);
+        if (reasoningOpenMatch && !text.includes('</reasoning>')) {
+            isAccumulatingReasoning = true;
+            accumulatedReasoning = reasoningOpenMatch[1] || '';
+            // Show initial status
+            if (accumulatedReasoning.trim()) {
+                writeSingleLineStatus(accumulatedReasoning.trim(), '💭');
+            }
+            return;
+        }
+        
+        // Check for closing tag (finish accumulating)
+        if (text.includes('</reasoning>')) {
+            if (isAccumulatingReasoning) {
+                // Add final content before closing tag
+                const finalContent = text.replace('</reasoning>', '').replace(/\s+/g, ' ').trim();
+                if (finalContent) {
+                    accumulatedReasoning += finalContent;
+                    // Show final update on single line
+                    const cleanText = accumulatedReasoning.replace(/\n/g, ' ').trim();
+                    if (cleanText) {
+                        writeSingleLineStatus(cleanText, '💭');
+                    }
+                }
+            }
+            // End single-line mode (moves to next line)
+            endSingleLineMode();
+            // Reset accumulation state
+            isAccumulatingReasoning = false;
+            accumulatedReasoning = '';
+            return;
+        }
+        
+        // If we're accumulating reasoning, stream on single line
+        if (isAccumulatingReasoning) {
+            accumulatedReasoning += text;
+            // Stream the latest content on a single line
+            const cleanText = accumulatedReasoning.replace(/\n/g, ' ').trim();
+            if (cleanText) {
+                writeSingleLineStatus(cleanText, '💭');
+            }
+            return;
+        }
+        
+        // Handle complete <reasoning> tags in a single chunk (non-streaming case)
+        if (text.includes('<reasoning>')) {
+            const reasoningText = text.replace(/<reasoning>/g, '').replace(/<\/reasoning>/g, '').trim();
+            endSingleLineMode();
+            const maxLen = 120;
+            const abbreviated = reasoningText.length > maxLen 
+                ? reasoningText.substring(0, maxLen) + '...'
+                : reasoningText;
+            process.stdout.write(`${ANSI.dim}${ANSI.magenta}💭 ${abbreviated}${ANSI.reset}\n`);
+            return;
+        }
+
+        // Handle generation attempt markers
         if (text.includes('</generation_attempt>')) {
-            console.clear();
             return;
         }
 
         if (text.includes('<generation_attempt')) {
-            console.clear();
-            console.log('🔧 Generating DML code...\n');
+            endSingleLineMode();
+            process.stdout.write(`\n${ANSI.yellow}${ANSI.bold}⚙️  Generating DML code...${ANSI.reset}\n`);
             return;
         }
 
@@ -2485,13 +2943,40 @@ export function richPrint(text) {
             return;
         }
 
-        // Otherwise, print as markdown (simplified)
-        // console.log(text);
-        process.stdout.write(marked(text));
+        // Handle START/END OF TOOL OUTPUT markers
+        if (text.includes('<START OF TOOL OUTPUT')) {
+            isInDmlExecution = true;
+            return; // Skip these internal markers
+        }
+        if (text.includes('<END OF TOOL OUTPUT')) {
+            endSingleLineMode();
+            return; // Skip these internal markers
+        }
+
+        // Handle goal/step output during DML execution - single line mode
+        if (isInDmlExecution && text.trim()) {
+            // Check if it looks like goal evaluation output or step output
+            const cleanText = text.replace(/<[^>]+>/g, '').trim();
+            if (cleanText && !cleanText.startsWith('#')) {
+                writeSingleLineStatus(cleanText, '⚡');
+                return;
+            }
+        }
+
+        // Default: buffer streamed text to avoid fragmented output
+        endSingleLineMode();
+        
+        // Skip completely empty chunks
+        if (!text) {
+            return;
+        }
+        
+        // Buffer the text for smooth output
+        bufferStreamText(text);
 
     } catch (error) {
-        console.error("Logging error:", error);
-        console.log(text);
+        debugLog("Logging error:", error);
+        process.stdout.write(text);
     }
 }
 
@@ -2509,7 +2994,7 @@ export function getGlobalTools() {
     if (GLOBAL_TOOLS && GLOBAL_TOOLS.length > 0) {
         return [...GLOBAL_TOOLS];
     } else {
-        console.log("Warning: Global tools not initialized, returning default tools");
+        debugLog("Warning: Global tools not initialized, returning default tools");
         return [];
     }
 }
@@ -2534,6 +3019,13 @@ export function __setGlobalToolsForTest(tools, desc = "") {
 // Initialize the bridge module with MCP servers and set up global tools
 export async function init(mcpServers = []) {
 
+    // Guard against double initialization
+    if (INITIALIZED) {
+        debugLog('[Bridge] Already initialized, skipping...');
+        return;
+    }
+    INITIALIZED = true;
+
     // Start with default tools
     const { DEFAULT_TOOLS } = await import('./tools.js');
     GLOBAL_TOOLS = [...DEFAULT_TOOLS];
@@ -2553,12 +3045,12 @@ export async function init(mcpServers = []) {
     }
 
     if (mcpServers && mcpServers.length > 0) {
-        console.log(`Loading ${mcpServers.length} MCP server(s) from configuration...`);
+        debugLog(`Loading ${mcpServers.length} MCP server(s) from configuration...`);
         const results = await Promise.all(mcpServers.map(connectMcpServer));
         const ok = results.filter(r => r);
         
     } else if (MCP_SERVER) {
-        console.log(`(Deprecated) Single MCP_SERVER env detected: ${MCP_SERVER}`);
+        debugLog(`(Deprecated) Single MCP_SERVER env detected: ${MCP_SERVER}`);
         await connectMcpServer({ name: 'env_server', type: 'http', url: MCP_SERVER });
     }
 
@@ -2568,14 +3060,15 @@ export async function init(mcpServers = []) {
         for (const name of Object.keys(MCP_TOOL_MAP)) {
             const tool = MCP_TOOL_MAP[name];
             toolsDesc += `Name: ${name}\nDescription: ${tool.description}\nParameters:${JSON.stringify(tool.inputSchema.jsonSchema.properties)}\n`;
-            GLOBAL_TOOLS.push(tool);
+            // Mark as MCP tool for identification
+            GLOBAL_TOOLS.push({ ...tool, name, fromMcp: true });
 
-            console.log(`Loaded MCP tool: ${name}`);
+            debugLog(`Loaded MCP tool: ${name}`);
         }
     }
 
     GLOBAL_TOOLS_DESCRIPTION = toolsDesc;
-    console.log(`Initialized with ${GLOBAL_TOOLS.length} default tools + ${Object.keys(MCP_TOOL_MAP).length} MCP tools`);
+    debugLog(`Initialized with ${GLOBAL_TOOLS.length} default tools + ${Object.keys(MCP_TOOL_MAP).length} MCP tools`);
 }
 
 /**
@@ -2583,9 +3076,9 @@ export async function init(mcpServers = []) {
  */
 export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null, workspaceDir = "./workspace", swipl = null, inputCallback = null, memory = [], abortSignal = null) {
     
-    console.log('[ABORT] runDmlAsync started with abort signal:', abortSignal ? 'provided' : 'null');
+    debugLog('[ABORT] runDmlAsync started with abort signal:', abortSignal ? 'provided' : 'null');
     if (abortSignal) {
-        console.log('[ABORT] Initial abort signal state:', abortSignal.aborted);
+        debugLog('[ABORT] Initial abort signal state:', abortSignal.aborted);
     }
     
     try {
@@ -2603,7 +3096,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
             // Set environment variable for session workspace
             // This is used by tools like LinuxVMTool to mount the correct workspace
             process.env.DML_CLI_WORKSPACE = workspaceDir;
-            console.log(`[Session ${sessionId}] Set DML_CLI_WORKSPACE to: ${workspaceDir}`);
+            debugLog(`[Session ${sessionId}] Set DML_CLI_WORKSPACE to: ${workspaceDir}`);
         }
 
         // Prepare per-session file logging
@@ -2699,7 +3192,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
                 
                 writeLog('Loaded Prolog modules in DML_DEV_MODE.');
-                console.log('DML_DEV_MODE: Loaded Prolog modules.');
+                debugLog('DML_DEV_MODE: Loaded Prolog modules.');
 
             } 
             writeLog('Loaded Prolog modules.');
@@ -2710,18 +3203,18 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                    
                     const saveResult = await swipl.prolog.query("qsave_program('mi.qsave', [autoload(true), verbose(true)]).    ").next();
                     writeLog('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
-                    console.log('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
+                    debugLog('DML_DEV_MODE: Saved Prolog state to mi.qsave.');
                     
                     const miData = swipl.FS.readFile('mi.qsave');
                     fs.writeFileSync('src/electron/initial_workspace/mi.qsave', miData);
 
                     writeLog('Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
-                    console.log('DML_DEV_MODE: Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
+                    debugLog('DML_DEV_MODE: Saved current Prolog state to src/electron/initial_workspace/mi.qsave');
 
                 } catch (e) {
                     const msg = `Error saving Prolog state to src/electron/initial_workspace/mi.qsave: ${e.message}\n`;
                     writeLog(msg);
-                    console.log(msg);
+                    debugLog(msg);
                     yield msg;
                     return;
                 }
@@ -2776,7 +3269,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
             while (!finished && iteration < maxIterations) {
                 // Check abort signal at start of each iteration
                 if (abortSignal?.aborted) {
-                    console.log('[ABORT] Abort signal detected in runDmlAsync main loop');
+                    debugLog('[ABORT] Abort signal detected in runDmlAsync main loop');
                     writeLog('Aborting DML execution due to abort signal');
                     yield '<log>⏹️ Execution aborted by user</log>\n';
                     break;
@@ -2785,7 +3278,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                 iteration++;
                 
                 if (iteration % 10 === 0) {
-                    console.log(`[ABORT] Iteration ${iteration}, abort signal:`, abortSignal?.aborted);
+                    debugLog(`[ABORT] Iteration ${iteration}, abort signal:`, abortSignal?.aborted);
                 }
 
                 try {
@@ -3018,7 +3511,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
                         } else if (func === 'agentLoop') {
 
-                            console.log('agentLoop function invoked from Prolog');
+                            debugLog('agentLoop function invoked from Prolog');
 
                             
                             const prompt = args[0];
@@ -3041,7 +3534,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
                             writeLog(`agentLoop result: ${agentResult ? JSON.stringify(agentResult) : 'null'}`);
 
-                            console.log(`agentLoop completed, sending result back to Prolog: ${JSON.stringify(agentResult)}`);
+                            debugLog(`agentLoop completed, sending result back to Prolog: ${JSON.stringify(agentResult)}`);
 
                             await swipl.prolog.query(`
                                 cmdline:send_input_to_engine('${engineId}', AgentResult)
@@ -3155,7 +3648,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
         }
         
         const msg = `<log>Error during DML execution: ${errorMsg}</log>\n`;
-        console.error('DML execution error:', error);
+        debugLog('DML execution error:', error);
         
         // Best-effort log write
         try {
@@ -3191,10 +3684,10 @@ function loadSettingsConfig() {
             const json = JSON.parse(raw);
             return json || {};
         } else {
-            console.warn(`MCP config file not found at ${configPath}`);
+            debugLog(`MCP config file not found at ${configPath}`);
         }
     } catch (e) {
-        console.error(`Failed to read MCP config: ${e.message}`);
+        debugLog(`Failed to read MCP config: ${e.message}`);
     }
     return {};
 }
@@ -3228,13 +3721,13 @@ async function connectMcpServer(def) {
         for (const [name, tDef] of Object.entries(toolSet || {})) {
             // Avoid silent override: keep first by default
             if (MCP_TOOL_MAP[name]) {
-                console.warn(`MCP tool name collision: ${name} (keeping first instance)`);
+                debugLog(`MCP tool name collision: ${name} (keeping first instance)`);
                 continue;
             }
             const desc = tDef?.description || `MCP tool ${name}`;
             MCP_TOOL_MAP[name] = tDef
 
-            console.log(`Found MCP tool: ${name}`);
+            debugLog(`Found MCP tool: ${name}`);
         }
 
         return {
@@ -3243,7 +3736,7 @@ async function connectMcpServer(def) {
         };
 
     } catch (err) {
-        console.error(`Error connecting MCP server (${def.name || def.type}): ${err.message}`);
+        debugLog(`Error connecting MCP server (${def.name || def.type}): ${err.message}`);
         return null;
     }
 }
@@ -3257,13 +3750,14 @@ export async function shutdownMcpClients() {
     }
     MCP_CLIENTS = [];
     MCP_TOOL_MAP = {};
+    INITIALIZED = false; // Reset initialization flag
 }
 
 // Reload MCP servers (shutdown and reinitialize)
 export async function reloadMcpServers() {
-    console.log('[MCP] Reloading MCP servers...');
+    debugLog('[MCP] Reloading MCP servers...');
     
-    // Shutdown existing clients
+    // Shutdown existing clients (this also resets INITIALIZED flag)
     await shutdownMcpClients();
     
     // Clear cached config path to force reload
@@ -3272,7 +3766,7 @@ export async function reloadMcpServers() {
     // Reinitialize with fresh config
     await init();
     
-    console.log(`[MCP] Reloaded. Now have ${Object.keys(MCP_TOOL_MAP).length} MCP tools available.`);
+    debugLog(`[MCP] Reloaded. Now have ${Object.keys(MCP_TOOL_MAP).length} MCP tools available.`);
 }
 
 // Export all functions
@@ -3282,6 +3776,7 @@ export default {
     evaluateGoal,
     questionToProlog,
     richPrint,
+    endSingleLineMode,
     getToolsDescription,
     getGlobalTools,
     getMcpToolNames,

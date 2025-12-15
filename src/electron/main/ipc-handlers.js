@@ -17,10 +17,13 @@ export function setupIpcHandlers(workspaceManager) {
   // Initialize DML Agent with workspace paths
   ipcMain.handle('initialize-agent', async () => {
     try {
+      const globalMiQsavePath = path.join(workspaceManager.deepClauseDir, 'mi.qsave');
       const paths = {
         workspace: workspaceManager.getWorkspacePath(),
         dmlExamples: workspaceManager.getDmlExamplesPath(),
-        config: workspaceManager.getConfigPath()
+        config: workspaceManager.getConfigPath(),
+        globalDeepclauseDir: workspaceManager.deepClauseDir,
+        miQsavePath: globalMiQsavePath
       };
 
       // Create input callback for user input requests
@@ -619,8 +622,8 @@ export function setupIpcHandlers(workspaceManager) {
           OPENROUTER_API_KEY: ''
         },
         defaultTools: {
-          brave_search: false,
-          you_search: true,
+          brave_search: true,
+          you_search: false,
           google_search: false,
           google_scholar_search: true,
           visit_webpage: true,
@@ -629,6 +632,7 @@ export function setupIpcHandlers(workspaceManager) {
           visualizer: true,
           diagram_generator: true,
           data_analyzer: true,
+          bash_executor: false,
           linux_vm: true
         }
       };
@@ -757,6 +761,26 @@ export function setupIpcHandlers(workspaceManager) {
   // Serial console handlers for v86 VM
   ipcMain.handle('connect-serial-console', async () => {
     try {
+      // First check if linux_vm is enabled in settings
+      const fs = await import('fs');
+      const settingsPath = workspaceManager.getSettingsPath();
+      
+      let linuxVmEnabled = false;
+      if (fs.existsSync(settingsPath)) {
+        try {
+          const data = fs.readFileSync(settingsPath, 'utf-8');
+          const settings = JSON.parse(data);
+          linuxVmEnabled = settings.defaultTools?.linux_vm === true;
+        } catch (e) {
+          console.warn('Failed to read settings for linux_vm check:', e.message);
+        }
+      }
+      
+      if (!linuxVmEnabled) {
+        console.log('Linux VM is disabled in settings');
+        return { success: false, error: 'Linux VM is disabled in settings' };
+      }
+      
       // Get the global LinuxVMTool instance from dml-js/tools
       const { getGlobalLinuxVMTool } = await import('../../dml-js/tools.js');
       const vmTool = getGlobalLinuxVMTool();
@@ -795,6 +819,25 @@ export function setupIpcHandlers(workspaceManager) {
 
   ipcMain.handle('send-serial-input', async (event, data) => {
     try {
+      // First check if linux_vm is enabled in settings
+      const fs = await import('fs');
+      const settingsPath = workspaceManager.getSettingsPath();
+      
+      let linuxVmEnabled = false;
+      if (fs.existsSync(settingsPath)) {
+        try {
+          const settingsData = fs.readFileSync(settingsPath, 'utf-8');
+          const settings = JSON.parse(settingsData);
+          linuxVmEnabled = settings.defaultTools?.linux_vm === true;
+        } catch (e) {
+          // Ignore parsing errors
+        }
+      }
+      
+      if (!linuxVmEnabled) {
+        return { success: false, error: 'Linux VM is disabled in settings' };
+      }
+      
       const { getGlobalLinuxVMTool } = await import('../../dml-js/tools.js');
       const vmTool = getGlobalLinuxVMTool();
       

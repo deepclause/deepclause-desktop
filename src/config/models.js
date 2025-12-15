@@ -23,20 +23,32 @@ function _getSettingsPath() {
   
   const resolver = getResourceResolver();
   
+  // Both Electron and CLI use the same settings path: ~/.deepclause/settings.json
+  const globalSettings = path.join(os.homedir(), '.deepclause', 'settings.json');
+  
   if (resolver) {
-    // Electron mode - use ~/.deepclause/config/settings.json
-    SETTINGS_PATH = path.join(os.homedir(), '.deepclause', 'config', 'settings.json');
+    // Electron mode
+    SETTINGS_PATH = globalSettings;
     console.log(`[Models] Using Electron settings path: ${SETTINGS_PATH}`);
   } else {
-    // CLI mode - use project config
-    // First check if settings.json exists in the same directory as this file (deployed mode)
-    const localSettings = path.join(__dirname, 'settings.json');
-    if (fs.existsSync(localSettings)) {
-      SETTINGS_PATH = localSettings;
-      console.log(`[Models] Using local settings path: ${SETTINGS_PATH}`);
+    // CLI mode
+    if (fs.existsSync(globalSettings)) {
+      SETTINGS_PATH = globalSettings;
+
+      if (process.env.DEBUG === '1') {
+      console.log(`[Models] Using global CLI settings path: ${SETTINGS_PATH}`);
+      }
     } else {
-      SETTINGS_PATH = path.resolve(process.cwd(), 'config', 'settings.json');
-      console.log(`[Models] Using CLI settings path: ${SETTINGS_PATH}`);
+      // Fallback: check if settings.json exists in the same directory as this file (deployed mode)
+      const localSettings = path.join(__dirname, 'settings.json');
+      if (fs.existsSync(localSettings)) {
+        SETTINGS_PATH = localSettings;
+        console.log(`[Models] Using local settings path: ${SETTINGS_PATH}`);
+      } else {
+        // Last fallback: project config directory
+        SETTINGS_PATH = path.resolve(process.cwd(), 'config', 'settings.json');
+        console.log(`[Models] Using fallback CLI settings path: ${SETTINGS_PATH}`);
+      }
     }
   }
   
@@ -106,7 +118,7 @@ function _readSettings() {
         });
     }
     
-    if (totalInjected > 0) {
+    if (totalInjected > 0 && process.env.DEBUG === '1') {
         console.log(`[Models] Injected ${totalInjected} environment variables from settings: ${injectedVars.join(', ')}`);
     }
     

@@ -900,13 +900,16 @@ async function copyUserSettings(deploymentPath, includeLinuxVM = false) {
   
   let config = {};
   
-  // 1. Try to load existing settings
+  // 1. Try to load existing settings (unified path for both Electron and CLI)
   let settingsSource = null;
-  const electronPath = path.join(os.homedir(), '.deepclause', 'config', 'settings.json');
+  const settingsPath = path.join(os.homedir(), '.deepclause', 'settings.json');
+  const legacyElectronPath = path.join(os.homedir(), '.deepclause', 'config', 'settings.json');
   const cliPath = path.resolve(process.cwd(), 'config', 'settings.json');
   
-  if (fs.existsSync(electronPath)) {
-    settingsSource = electronPath;
+  if (fs.existsSync(settingsPath)) {
+    settingsSource = settingsPath;
+  } else if (fs.existsSync(legacyElectronPath)) {
+    settingsSource = legacyElectronPath;
   } else if (fs.existsSync(cliPath)) {
     settingsSource = cliPath;
   }

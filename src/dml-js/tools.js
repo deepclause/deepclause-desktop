@@ -10,7 +10,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { z } from 'zod';
 import { execSync } from 'child_process';
 
-import { setTimeout } from 'node:timers/promises';
+import { setTimeout as setTimeoutAsync } from 'node:timers/promises';
 
 import { V86 } from "../../vendor/v86/build/libv86.mjs"; 
 
@@ -614,7 +614,10 @@ Output JSON Schema (summarizer):
         const path = "/web/search";
         //truncate query to at most 50 characters
         const truncatedQuery = query.length > 50 ? query.substring(0, 50) + "..." : query;
-        console.log(`[Brave Search] Query: ${truncatedQuery}`);
+        
+        if (process.env.DEBUG === '1')
+            console.log(`[Brave Search] Query: ${truncatedQuery}`);
+
         const searchParams = new URLSearchParams({
             q: truncatedQuery,
             count: String(params.count || 10),
@@ -1149,7 +1152,7 @@ class VisitWebpageTool extends Tool {
             
             console.log('[VisitWebpageTool] Waiting 5 seconds for JavaScript execution...');
             // Give the page time to run JavaScript (important for SPAs)
-            await setTimeout(5000);
+            await setTimeoutAsync(5000);
             console.log('[VisitWebpageTool] Wait completed');
 
             this.streamProgress(`📄 Extracting page content...`);
@@ -2750,7 +2753,7 @@ class LinuxVMTool extends Tool {
                 this.streamProgress("⏳ Booting Linux VM...");
             }
             //sleep 1 sec
-            await setTimeout(1000)
+            await setTimeoutAsync(1000)
             c+=1;
             if (c > 200) {
                 return "ERROR: could not initialize linux environment."
@@ -2818,22 +2821,340 @@ class LinuxVMTool extends Tool {
     }
 }
 
-// Default tools list for export
-export const DEFAULT_TOOLS = [
-    new WorkspaceReaderTool(),
-    new FileDownloaderTool(),
-    new GoogleSearchTool(),
-    new YouComSearchTool(),
-    new BraveSearchTool(),
-    new GoogleScholarSearchTool(),
-    new VisitWebpageTool(),
-    new VisualizerTool(),
-    new DiagramGeneratorTool(),
-    new DataAnalysisTool(),
-   // new LinuxVMTool(),
-];
+/**
+ * Bash Executor Tool - Semi-restricted local shell execution
+ * Executes bash commands on the host system with safety restrictions
+ */
+class BashExecutorTool extends Tool {
+    constructor(sessionId = null, options = {}) {
+        super();
+        this.name = "bash_executor";
+        this.description = "Executes bash commands locally on the host system. Use for file operations, running scripts, installing packages, etc. Commands run in the workspace directory by default.";
+        this.inputs = {
+            command: {
+                type: "string",
+                description: "The bash command to execute",
+            },
+            timeout: {
+                type: "integer",
+                description: "Timeout in seconds (optional, default: 60, max: 300)",
+                nullable: true,
+                default: 60
+            },
+            interactive: {
+                type: "boolean",
+                description: "If true, connects stdin/stdout directly to the terminal (CLI mode only)",
+                nullable: true,
+                default: false
+            }
+        };
+        this.output_type = "string";
+        this.sessionId = sessionId;
+        
+        // CLI mode options - allow passing stdin/stdout for interactive commands
+        this.cliMode = options.cliMode || false;
+        this.stdin = options.stdin || null;
+        this.stdout = options.stdout || null;
+        
+        // Dangerous patterns that should be blocked
+        this.blockedPatterns = [
+            /\bsudo\b/i,
+            /\bsu\s+/i,
+            /\brm\s+(-[rf]+\s+)*\/\s*$/,  // rm -rf / or rm /
+            /\brm\s+(-[rf]+\s+)*\/\*\s*$/,  // rm -rf /*
+            /\bdd\s+.*of=\/dev\//i,  // dd to device
+            /\bmkfs\./i,  // mkfs commands
+            /\bfdisk\b/i,
+            /\bparted\b/i,
+            /\b:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/,  // fork bomb
+            />\s*\/dev\/sd[a-z]/i,  // overwrite disk
+            /\bchmod\s+777\s+\//i,  // chmod 777 /
+            /\bchown\s+.*\s+\/\s*$/i,  // chown /
+        ];
+        
+        // Patterns that trigger a warning (but are allowed)
+        this.warningPatterns = [
+            { pattern: /\brm\s+-[rf]/i, message: "⚠️ Warning: rm with -r or -f flags detected" },
+            { pattern: /\bchmod\b/i, message: "⚠️ Warning: chmod command detected" },
+            { pattern: /\bchown\b/i, message: "⚠️ Warning: chown command detected" },
+            { pattern: />\s*\//i, message: "⚠️ Warning: Redirecting to absolute path" },
+            { pattern: /\bkill\b/i, message: "⚠️ Warning: kill command detected" },
+            { pattern: /\bpkill\b/i, message: "⚠️ Warning: pkill command detected" },
+            { pattern: /\bshutdown\b/i, message: "⚠️ Warning: shutdown command detected" },
+            { pattern: /\breboot\b/i, message: "⚠️ Warning: reboot command detected" },
+        ];
+    }
+
+    /**
+     * Check if a command contains blocked patterns
+     */
+    isBlocked(command) {
+        for (const pattern of this.blockedPatterns) {
+            if (pattern.test(command)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get warnings for potentially dangerous commands
+     */
+    getWarnings(command) {
+        const warnings = [];
+        for (const { pattern, message } of this.warningPatterns) {
+            if (pattern.test(command)) {
+                warnings.push(message);
+            }
+        }
+        return warnings;
+    }
+
+    /**
+     * Get the workspace directory
+     */
+    getWorkspaceDir() {
+        let userWorkspace = process.env.USER_WORKSPACES;
+        if (!userWorkspace) {
+            return process.env.DML_CLI_WORKSPACE || process.cwd();
+        }
+        const session = this.sessionId || process.env.PLOGCHAIN_SESSION_ID;
+        return session ? path.join(userWorkspace, session) : userWorkspace;
+    }
+
+    async forward(command, timeout = 60, interactive = false) {
+        // Validate timeout
+        timeout = Math.min(Math.max(timeout || 60, 1), 300); // 1-300 seconds
+        
+        this.streamProgress(`🔧 Executing bash command...`);
+        
+        // Check for blocked commands
+        if (this.isBlocked(command)) {
+            return `❌ ERROR: Command blocked for safety reasons.\n\nThe following types of commands are not allowed:\n- sudo/su (privilege escalation)\n- rm -rf / (destructive system operations)\n- dd to devices\n- Disk formatting commands (mkfs, fdisk, parted)\n- Fork bombs\n\nPlease modify your command and try again.`;
+        }
+        
+        // Check for warnings
+        const warnings = this.getWarnings(command);
+        let warningOutput = "";
+        if (warnings.length > 0) {
+            warningOutput = warnings.join("\n") + "\n\n";
+            this.streamProgress(warnings.join("\n"));
+        }
+        
+        // Determine working directory
+        //let cwd = workingDirectory;
+        //if (!cwd) {
+        let cwd = this.getWorkspaceDir();
+        //}
+        
+        // Ensure working directory exists
+        if (!fs.existsSync(cwd)) {
+            try {
+                fs.mkdirSync(cwd, { recursive: true });
+            } catch (e) {
+                return `❌ ERROR: Could not create working directory: ${cwd}\n${e.message}`;
+            }
+        }
+        
+        this.streamProgress(`📂 Working directory: ${cwd}`);
+        this.streamProgress(`⏱️ Timeout: ${timeout}s`);
+        
+        try {
+            const { spawn, spawnSync } = await import('child_process');
+            
+            // Check if we should run in interactive mode
+            // Auto-detect CLI mode if stdin is a TTY (terminal)
+            const isTTY = process.stdin.isTTY && process.stdout.isTTY;
+            const useInteractive = interactive && isTTY;
+            
+            // For interactive mode, use spawnSync which properly handles TTY
+            if (useInteractive) {
+                this.streamProgress(`🖥️ Running in interactive mode...`);
+                
+                // Ensure stdin is in the right mode for interactive use
+                if (process.stdin.setRawMode) {
+                    process.stdin.setRawMode(false);
+                }
+                
+                const result = spawnSync('/bin/bash', ['-c', command], {
+                    cwd: cwd,
+                    stdio: [0, 1, 2], // Use file descriptors directly for proper TTY
+                    env: {
+                        ...process.env,
+                        PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+                        TERM: process.env.TERM || 'xterm-256color'
+                    },
+                    timeout: timeout * 1000
+                });
+                
+                if (result.error) {
+                    return `${warningOutput}❌ ERROR: ${result.error.message}`;
+                }
+                
+                if (result.signal === 'SIGTERM') {
+                    return `${warningOutput}❌ ERROR: Command timed out after ${timeout} seconds.`;
+                }
+                
+                return `${warningOutput}✅ Interactive command completed with exit code: ${result.status}`;
+            }
+            
+            // Use async spawn for non-interactive commands
+            const result = await new Promise((resolve, reject) => {
+                const spawnOptions = {
+                    cwd: cwd,
+                    env: {
+                        ...process.env,
+                        // Ensure PATH includes common locations
+                        PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin'
+                    }
+                };
+                
+                const proc = spawn('/bin/bash', ['-c', command], spawnOptions);
+                
+                let stdout = '';
+                let stderr = '';
+                let killed = false;
+                
+                // Set up timeout
+                const timeoutId = setTimeout(() => {
+                    killed = true;
+                    proc.kill('SIGTERM');
+                    // Force kill after 5 seconds if still running
+                    setTimeout(() => proc.kill('SIGKILL'), 5000);
+                }, timeout * 1000);
+                
+                // Stream stdout as it comes in
+                proc.stdout.on('data', (data) => {
+                    const chunk = data.toString();
+                    stdout += chunk;
+                    // Stream the output to the UI
+                    this.streamProgress(chunk);
+                    // Prevent buffer overflow
+                    if (stdout.length > 10 * 1024 * 1024) {
+                        stdout = stdout.slice(-5 * 1024 * 1024);
+                    }
+                });
+                
+                // Stream stderr as it comes in
+                proc.stderr.on('data', (data) => {
+                    const chunk = data.toString();
+                    stderr += chunk;
+                    // Stream stderr with a prefix to distinguish it
+                    this.streamProgress(`⚠️ ${chunk}`);
+                    // Prevent buffer overflow
+                    if (stderr.length > 10 * 1024 * 1024) {
+                        stderr = stderr.slice(-5 * 1024 * 1024);
+                    }
+                });
+                
+                proc.on('error', (err) => {
+                    clearTimeout(timeoutId);
+                    reject(err);
+                });
+                
+                proc.on('close', (code) => {
+                    clearTimeout(timeoutId);
+                    resolve({ status: code, stdout, stderr, killed });
+                });
+            });
+            
+            // Handle timeout
+            if (result.killed) {
+                return `${warningOutput}❌ ERROR: Command timed out after ${timeout} seconds.\n\nPartial output:\n\`\`\`\n${result.stdout || '(no output)'}\n\`\`\`\n\nStderr:\n\`\`\`\n${result.stderr || '(no stderr)'}\n\`\`\``;
+            }
+            
+            // Handle non-zero exit code
+            if (result.status !== 0) {
+                this.streamProgress(`❌ Command failed with exit code ${result.status}`);
+                return `${warningOutput}Exit code: ${result.status}\n\n**Stdout:**\n\`\`\`\n${result.stdout || '(no output)'}\n\`\`\`\n\n**Stderr:**\n\`\`\`\n${result.stderr}\n\`\`\``;
+            }
+            
+            this.streamProgress(`✅ Command completed successfully.`);
+            
+            // Truncate very long output
+            const maxOutput = 50000; // 50KB
+            let output = result.stdout || '';
+            if (output.length > maxOutput) {
+                output = output.slice(0, maxOutput / 2) + 
+                    "\n\n... [OUTPUT TRUNCATED - " + (output.length - maxOutput) + " bytes omitted] ...\n\n" +
+                    output.slice(-maxOutput / 2);
+            }
+            
+            return `${warningOutput}Exit code: 0\n\n**Command output:**\n\`\`\`\n${output}\n\`\`\``;
+            
+        } catch (error) {
+            this.streamProgress(`❌ Command failed: ${error.message}`);
+            return `${warningOutput}❌ ERROR: ${error.message}`;
+        }
+    }
+}
+
+/**
+ * Build default tools list based on settings configuration
+ * This respects the defaultTools settings for search provider selection
+ */
+function buildDefaultTools() {
+    const toolConfig = loadToolSettings();
+    
+    const tools = [];
+    
+    // Add workspace/file tools (always enabled by default, unless explicitly disabled)
+    if (!toolConfig || toolConfig.workspace_reader !== false) {
+        tools.push(new WorkspaceReaderTool());
+    }
+    if (!toolConfig || toolConfig.file_downloader !== false) {
+        tools.push(new FileDownloaderTool());
+    }
+    
+    // Add the appropriate search tool based on settings
+    // Only ONE search tool should be added (mutually exclusive)
+    if (toolConfig) {
+        if (toolConfig.brave_search) {
+            tools.push(new BraveSearchTool());
+        } else if (toolConfig.you_search) {
+            tools.push(new YouComSearchTool());
+        } else if (toolConfig.google_search) {
+            tools.push(new GoogleSearchTool());
+        } else {
+            // No search tool enabled, default to Brave
+            tools.push(new BraveSearchTool());
+        }
+    } else {
+        // No config, default to Brave search
+        tools.push(new BraveSearchTool());
+    }
+    
+    // Add Google Scholar (independent from main search tools)
+    if (!toolConfig || toolConfig.google_scholar_search !== false) {
+        tools.push(new GoogleScholarSearchTool());
+    }
+    
+    // Add other tools based on config
+    if (!toolConfig || toolConfig.visit_webpage !== false) {
+        tools.push(new VisitWebpageTool());
+    }
+    if (!toolConfig || toolConfig.visualizer !== false) {
+        tools.push(new VisualizerTool());
+    }
+    if (!toolConfig || toolConfig.diagram_generator !== false) {
+        tools.push(new DiagramGeneratorTool());
+    }
+    if (!toolConfig || toolConfig.data_analyzer !== false) {
+        tools.push(new DataAnalysisTool());
+    }
+    // Bash executor - requires explicit enable for safety
+    if (toolConfig && toolConfig.bash_executor) {
+        tools.push(new BashExecutorTool());
+    }
+    if (toolConfig && toolConfig.linux_vm) {
+        tools.push(getGlobalLinuxVMTool());
+    }
+    
+    return tools;
+}
 
 // Global singleton instance of LinuxVMTool - shared across all sessions
+// NOTE: This must be declared BEFORE DEFAULT_TOOLS to avoid temporal dead zone error
 let globalLinuxVMTool = null;
 
 /**
@@ -2846,6 +3167,9 @@ function getGlobalLinuxVMTool() {
     }
     return globalLinuxVMTool;
 }
+
+// Default tools list for export - built based on settings
+export const DEFAULT_TOOLS = buildDefaultTools();
 
 // Helper: convert our inputs spec to a zod schema
 function inputsToZod(inputs) {
@@ -2888,24 +3212,33 @@ function loadToolSettings() {
         // Check if we're in Electron mode (has global.resourceResolver)
         const resolver = typeof global !== 'undefined' ? global.resourceResolver : null;
         
+        // Both Electron and CLI use the same settings path: ~/.deepclause/settings.json
+        const homeDir = process.env.HOME || process.env.USERPROFILE;
+        if (!homeDir) {
+            console.warn('[Tools] Could not determine home directory for settings');
+            return null;
+        }
+        const globalSettings = path.join(homeDir, '.deepclause', 'settings.json');
+        
         if (resolver) {
-            // Electron mode - use ~/.deepclause/config/settings.json
-            const homeDir = process.env.HOME || process.env.USERPROFILE;
-            if (!homeDir) {
-                console.warn('[Tools] Could not determine home directory for settings');
-                return null;
-            }
-            settingsPath = path.join(homeDir, '.deepclause', 'config', 'settings.json');
+            // Electron mode
+            settingsPath = globalSettings;
         } else {
-            // CLI/Deployed mode - check for local settings.json first (deployed mode)
-            const __dirname = path.dirname(new URL(import.meta.url).pathname);
-            const localSettings = path.join(__dirname, '..', 'config', 'settings.json');
+            // CLI mode - check global settings first
             
-            if (fs.existsSync(localSettings)) {
-                settingsPath = localSettings;
+            if (globalSettings && fs.existsSync(globalSettings)) {
+                settingsPath = globalSettings;
             } else {
-                // Fall back to project config
-                settingsPath = path.resolve(process.cwd(), 'config', 'settings.json');
+                // Fallback: check for local settings.json (deployed mode)
+                const __dirname = path.dirname(new URL(import.meta.url).pathname);
+                const localSettings = path.join(__dirname, '..', 'config', 'settings.json');
+                
+                if (fs.existsSync(localSettings)) {
+                    settingsPath = localSettings;
+                } else {
+                    // Last fallback: project config
+                    settingsPath = path.resolve(process.cwd(), 'config', 'settings.json');
+                }
             }
         }
         
@@ -2916,7 +3249,9 @@ function loadToolSettings() {
         
         const data = fs.readFileSync(settingsPath, 'utf-8');
         const settings = JSON.parse(data);
-        console.log('[Tools] Loaded tool settings from:', settingsPath);
+
+        if (process.env.DEBUG === '1')
+            console.log('[Tools] Loaded tool settings from:', settingsPath);
         return settings.defaultTools || null;
     } catch (error) {
         console.error('[Tools] Error loading tool settings:', error);
@@ -2991,6 +3326,9 @@ export function buildAiTools(sessionId = null, progressCallback = null) {
         instances.push(getGlobalLinuxVMTool());
     }
 
+    if (toolConfig && toolConfig.bash_executor) {
+        instances.push(new BashExecutorTool(sessionId));
+    }
 
     if (!sessionTools[sessionId]) {
          sessionTools[sessionId] = []

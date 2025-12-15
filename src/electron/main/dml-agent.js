@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { glob } from 'glob';
 import { globSync } from 'glob';
 import crypto from 'crypto';
@@ -15,6 +16,13 @@ import { openrouter } from '@openrouter/ai-sdk-provider';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { openai, createOpenAI } from '@ai-sdk/openai';
 import { analyzeDmlParameters, formatParametersInfo, readDmlFileContents, listDmlFiles } from '../../dml-js/dml-utils.js';
+
+// Debug logging helper - only logs when DEBUG=1
+const debugLog = (...args) => {
+    if (process.env.DEBUG === '1') {
+        console.log(...args);
+    }
+};
 
 // Configuration - lazily loaded
 let agentModelConfig = null;
@@ -40,7 +48,7 @@ const providerMap = {
     },
     openai: (m) => {
 
-        console.log(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
+        debugLog(`[DML Bridge] Resolving OpenAI-compatible model with input: ${JSON.stringify(m)}`);
 
         // Accept either a model string or an object { model, baseURL }
         const model = (m && typeof m === 'object') ? m.name : m;
@@ -52,7 +60,7 @@ const providerMap = {
             if (!process.env.OPENAI_BASE_URL)
                  process.env.OPENAI_BASE_URL = base;
         }
-        console.log(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
+        debugLog(`[DML Bridge] Creating OpenAI-compatible model ${model} with baseURL: ${base}`);
         const provider = createOpenAICompatible({name: "provider", baseURL: base, apiKey: process.env.OPENAI_API_KEY});
         return provider(model)
     },
@@ -188,8 +196,8 @@ function safeParseJson(str, fallback = {}) {
 }
 
 function swiplOutputHandler(line) {
-    if (process.env.DEBUG) {
-        console.log("SWI-Prolog Output:", line);
+    if (process.env.DEBUG === '1') {
+        debugLog("SWI-Prolog Output:", line);
     }
 }
 
@@ -219,7 +227,7 @@ function convertDotPathToFilePath(name) {
 
 function readDmlExample(filename, dmlExamplesDir) {
     // dmlExamplesDir may be a string or an array of directories to search (learned + session)
-    console.log("Reading DML example:", filename, "from", dmlExamplesDir);
+    debugLog("Reading DML example:", filename, "from", dmlExamplesDir);
 
     // Support both dot notation (browser.find_trials) and direct paths (browser/find_trials.dml)
     const fname = convertDotPathToFilePath(filename);
@@ -253,6 +261,7 @@ async function runDmlCode(dmlCode, workspaceDir, {
     memory = [],
     swipl = null,
     abortController = null,
+    miQsavePath = null,  // Optional explicit path to mi.qsave
 } = {}) {
     const sessionId = buildSessionId(sessionPrefix);
     const shouldCleanupSwipl = !swipl;
@@ -263,29 +272,38 @@ async function runDmlCode(dmlCode, workspaceDir, {
                 swipl = await SWIPL({ 
                     arguments: ["-q"], 
                     on_output: (line) => {
-                        if (process.env.DEBUG) {
-                            console.log(`SWI-Prolog:`, line);
+                        if (process.env.DEBUG === '1') {
+                            debugLog(`SWI-Prolog:`, line);
                         }
                     }
                 });
             } else {
+                // Always use global ~/.deepclause/mi.qsave path
+                const miPath = miQsavePath || path.join(os.homedir(), '.deepclause', 'mi.qsave');
+                
+                if (!fs.existsSync(miPath)) {
+                    throw new Error(`mi.qsave not found at ${miPath}`);
+                }
+                
+                debugLog(`[SWIPL] Using mi.qsave from: ${miPath}`);
+                
                 swipl = await SWIPL({ 
                     arguments: ["-x", "mi.qsave"], 
                     on_output: (line) => {
-                        if (process.env.DEBUG) {
-                            console.log(`SWI-Prolog:`, line);
+                        if (process.env.DEBUG === '1') {
+                            debugLog(`SWI-Prolog:`, line);
                         }
                     },
                     preRun: [(module) => { 
-                        console.log("[PRE-RUN] Loading mi.qsave into SWIPL filesystem");
-                        const miData = fs.readFileSync(path.join(workspaceDir, 'mi.qsave'));
+                        debugLog("[PRE-RUN] Loading mi.qsave into SWIPL filesystem");
+                        const miData = fs.readFileSync(miPath);
                         module.FS.writeFile('mi.qsave', miData); }
                     ]
                 });
             }
 
         } catch (error) {
-            console.error(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
+            debugLog(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
             throw error;
         }
     }
@@ -293,10 +311,10 @@ async function runDmlCode(dmlCode, workspaceDir, {
     const lines = ["\n\n<START OF TOOL OUTPUT FOR run_dml_file_tool>\n"];
 
     try {
-        console.log(`[ABORT] Starting runDmlAsync with abort signal:`, abortController?.signal.aborted);
+        debugLog(`[ABORT] Starting runDmlAsync with abort signal:`, abortController?.signal.aborted);
         for await (const line of runDmlAsync(dmlCode, sessionId, params, workspaceDir, swipl, inputCallback, memory, abortController?.signal)) {
             if (abortController?.signal.aborted) {
-                console.log(`[ABORT] Abort detected in runDmlCode loop`);
+                debugLog(`[ABORT] Abort detected in runDmlCode loop`);
                 break;
             }
             if (collect) lines.push(line);
@@ -346,7 +364,7 @@ async function runDml(dmlCode, workspaceDir, parameters = "{}") {
 /**
  * Tool: Generate DML code from a natural language prompt
  */
-async function generateDmlFromPrompt(prompt, dmlExamplesDir, outputCallback = null) {
+async function generateDmlFromPrompt(prompt, dmlExamplesDir, outputCallback = null, miQsavePath = null) {
     try {
         let generatedCode = null;
         let errorMsg = null;
@@ -354,10 +372,41 @@ async function generateDmlFromPrompt(prompt, dmlExamplesDir, outputCallback = nu
         // Ensure bridge is initialized before proceeding (initializes GLOBAL_TOOLS)
         await initBridge();
 
-        const swipl = await SWIPL({ 
-            arguments: ["-q"], 
-            on_output: (line) => {console.log(line)} 
-        });
+        let swipl;
+        const effectiveMiQsavePath = miQsavePath || path.join(os.homedir(), '.deepclause', 'mi.qsave');
+        
+        try {
+            if (process.env.DML_DEV_MODE) {
+                swipl = await SWIPL({ 
+                    arguments: ["-q"], 
+                    on_output: (line) => {
+                        if (process.env.DEBUG === '1') {
+                            debugLog(`SWI-Prolog:`, line);
+                        }
+                    }
+                });
+            } else {
+                swipl = await SWIPL({ 
+                    arguments: ["-x", "mi.qsave"], 
+                    on_output: (line) => {
+                        if (process.env.DEBUG === '1') {
+                            debugLog(`SWI-Prolog:`, line);
+                        }
+                    },
+                    preRun: [(module) => { 
+                        debugLog(`[PRE-RUN] Loading mi.qsave from: ${effectiveMiQsavePath}`);
+                        const miData = fs.readFileSync(effectiveMiQsavePath);
+                        module.FS.writeFile('mi.qsave', miData); }
+                    ]
+                });
+
+                swipl.__dmlModulesLoaded = true;
+            }
+
+        } catch (error) {
+            debugLog(`Error creating SWIPL instance for generateDmlFromPrompt:`, error);
+            throw error;
+        }
 
         const initQuery = `
             use_module(library(clpfd)),
@@ -368,6 +417,7 @@ async function generateDmlFromPrompt(prompt, dmlExamplesDir, outputCallback = nu
             use_module(library(lists)).
         `;
 
+    
         const initResult = await swipl.prolog.query(initQuery).next();
 
         if (!initResult || initResult.value.Success == 'false') {
@@ -493,18 +543,18 @@ async function runDmlFileTool(filename, dmlExamplesDir, workspaceDir, inputCallb
             const files = Array.from(fileSet).sort();
             if (files.length === 0) {
                 const msg = `No DML files found in ${dirs.join(', ')}`;
-                console.log(msg);
+                debugLog(msg);
                 if (outputCallback) outputCallback(`<log>${msg}</log>\n`);
                 return msg;
             }
 
-            console.log(`Found ${files.length} DML files to run`);
+            debugLog(`Found ${files.length} DML files to run`);
             if (outputCallback) outputCallback(`<log>Found ${files.length} DML files to run</log>\n`);
 
             let aggregateOutput = '';
             for (const filepath of files) {
                 if (abortController?.signal?.aborted) {
-                    console.log('Abort detected, stopping multi-file run');
+                    debugLog('Abort detected, stopping multi-file run');
                     if (outputCallback) outputCallback('<log>⏹️ Aborted multi-file run</log>\n');
                     break;
                 }
@@ -518,7 +568,7 @@ async function runDmlFileTool(filename, dmlExamplesDir, workspaceDir, inputCallb
                 if (outputCallback) outputCallback(`<dml-file-start file="${relative}">${header}</dml-file-start>\n`);
 
                 try {
-                    console.log(`Running file: ${filepath}`);
+                    debugLog(`Running file: ${filepath}`);
                     const out = await runDmlCode(content, workspaceDir, {
                         params: paramsDict,
                         sessionPrefix: 'tool',
@@ -624,8 +674,17 @@ async function listDmlFilesTool(dmlExamplesDir) {
 export class DMLAgent {
     constructor(paths, inputCallback = null, outputCallback = null) {
         this.workspacePath = paths.workspace;
-        this.dmlExamplesDir = paths.dmlExamples;
+        this.dmlExamplesDir = paths.dmlExamples;  // Primary directory for saving files
         this.learnedExamplesDir = path.join(paths.dmlExamples, 'learned');
+        
+        // Support for multiple search directories (CLI mode: local + global)
+        // dmlExamplesDirs is an array of directories to search when looking for DML files
+        this.dmlExamplesDirs = paths.dmlExamplesDirs || [paths.dmlExamples];
+        
+        // Global deepclause directory (for mi.qsave location in CLI mode)
+        this.globalDeepclauseDir = paths.globalDeepclauseDir || null;
+        this.miQsavePath = paths.miQsavePath || null;
+        
         this.configPath = paths.config;
         this.conversationsDir = path.join(path.dirname(this.configPath), 'conversations');
         this.lastGeneratedDml = null;
@@ -652,7 +711,8 @@ export class DMLAgent {
         // Initialize learned folder and README if it doesn't exist
         this.initializeLearnedFolder();
 
-        initBridge();
+        // Note: initBridge() is called by the main entry point, not here
+        // to avoid double initialization
     }
 
     /**
@@ -661,7 +721,7 @@ export class DMLAgent {
     initializeLearnedFolder() {
         if (!fs.existsSync(this.learnedExamplesDir)) {
             fs.mkdirSync(this.learnedExamplesDir, { recursive: true });
-            console.log(`Created learned folder at: ${this.learnedExamplesDir}`);
+            debugLog(`Created learned folder at: ${this.learnedExamplesDir}`);
         }
         
         // Copy initial examples from bundled resources
@@ -698,11 +758,11 @@ export class DMLAgent {
             }
             
             if (!fs.existsSync(initialExamplesDir)) {
-                console.warn(`Initial examples directory not found at: ${initialExamplesDir}`);
+                debugLog(`Initial examples directory not found at: ${initialExamplesDir}`);
                 return;
             }
             
-            console.log(`Copying initial examples from: ${initialExamplesDir}`);
+            debugLog(`Copying initial examples from: ${initialExamplesDir}`);
             
             // Read all files from initial_examples directory
             const files = fs.readdirSync(initialExamplesDir);
@@ -720,18 +780,18 @@ export class DMLAgent {
                 if (!fs.existsSync(destPath)) {
                     fs.copyFileSync(sourcePath, destPath);
                     copiedCount++;
-                    console.log(`Copied: ${file}`);
+                    debugLog(`Copied: ${file}`);
                 }
             }
             
             if (copiedCount > 0) {
-                console.log(`Successfully copied ${copiedCount} initial example files to learned folder`);
+                debugLog(`Successfully copied ${copiedCount} initial example files to learned folder`);
             } else {
-                console.log(`All initial examples already present in learned folder`);
+                debugLog(`All initial examples already present in learned folder`);
             }
             
         } catch (error) {
-            console.error(`Error copying initial examples: ${error.message}`);
+            debugLog(`Error copying initial examples: ${error.message}`);
         }
     }
 
@@ -741,7 +801,7 @@ export class DMLAgent {
         }
 
         // Use the learned folder for examples
-        const generatedCode = await generateDmlFromPrompt(description, this.learnedExamplesDir, this.outputCallback);
+        const generatedCode = await generateDmlFromPrompt(description, this.learnedExamplesDir, this.outputCallback, this.miQsavePath);
         
         if (generatedCode && !generatedCode.startsWith('Error')) {
             this.trackGeneratedDml(generatedCode);
@@ -829,7 +889,7 @@ export class DMLAgent {
             }
             
             // Use existing DML generation pipeline
-            const generatedCode = await generateDmlFromPrompt(prompt, this.learnedExamplesDir, this.outputCallback);
+            const generatedCode = await generateDmlFromPrompt(prompt, this.learnedExamplesDir, this.outputCallback, this.miQsavePath);
             
             if (generatedCode && !generatedCode.startsWith('Error')) {
                 this.trackGeneratedDml(generatedCode);
@@ -845,7 +905,7 @@ export class DMLAgent {
             }
             
         } catch (error) {
-            console.error('Error compiling tree to DML:', error);
+            debugLog('Error compiling tree to DML:', error);
             return {
                 success: false,
                 error: error.message
@@ -873,8 +933,8 @@ export class DMLAgent {
     }
 
     async runDmlFile(filename, parameters = "{}", conversationId = null) {
-        // Determine dirs to search: root examples, learned, + optional session-specific folder
-        const dirs = [this.dmlExamplesDir, this.learnedExamplesDir];
+        // Determine dirs to search: all configured example dirs, learned, + optional session-specific folder
+        const dirs = [...this.dmlExamplesDirs, this.learnedExamplesDir];
         if (conversationId) {
             const sessionDmlDir = path.join(this.dmlExamplesDir, 'sessions', conversationId);
             dirs.push(sessionDmlDir);
@@ -899,7 +959,7 @@ export class DMLAgent {
             
             // Create conversation state if it doesn't exist
             if (!convState) {
-                console.log(`[runDmlFile] Creating new conversation state for: ${conversationId}`);
+                debugLog(`[runDmlFile] Creating new conversation state for: ${conversationId}`);
                 convState = {
                     swipl: null, // Will be created when needed
                     abortController: new AbortController(),
@@ -916,22 +976,25 @@ export class DMLAgent {
             convState.lastExecutedDml = dmlContent;
             convState.lastExecutedDmlFile = filename;
             convState.lastExecutedOutput = result;
-            console.log(`[runDmlFile] Tracked execution for conversation ${conversationId}: ${filename}`);
+            debugLog(`[runDmlFile] Tracked execution for conversation ${conversationId}: ${filename}`);
         }
         
         return result;
     }
 
     async listDmlFiles() {
-        return await listDmlFilesTool(this.dmlExamplesDir);
+        // Search across all configured example directories
+        return await listDmlFilesTool(this.dmlExamplesDirs);
     }
 
     async analyzeDmlFile(filename) {
-        return await analyzeDmlFile(filename, this.dmlExamplesDir);
+        // Search across all configured example directories
+        return await analyzeDmlFile(filename, this.dmlExamplesDirs);
     }
 
     async readDmlFile(filename) {
-        return await readDmlFile(filename, this.dmlExamplesDir);
+        // Search across all configured example directories
+        return await readDmlFile(filename, this.dmlExamplesDirs);
     }
 
     async readDmlFileContent(filename) {
@@ -950,7 +1013,7 @@ export class DMLAgent {
             }
         } catch (error) {
             // Description file doesn't exist or error reading it
-            console.log('No description file found or error reading:', error.message);
+            debugLog('No description file found or error reading:', error.message);
         }
         
         return { content, description };
@@ -1060,7 +1123,7 @@ export class DMLAgent {
                 fs.writeFileSync(workspaceTreeFilePath, JSON.stringify(emptyTreeWorkspace, null, 2), 'utf-8');
             }
         } catch (err) {
-            console.warn('Failed to create tree sidecar for new DML file:', err && err.message ? err.message : err);
+            debugLog('Failed to create tree sidecar for new DML file:', err && err.message ? err.message : err);
             // Non-fatal: continue returning success for DML creation
         }
 
@@ -1070,21 +1133,29 @@ export class DMLAgent {
     async learnDmlFile(filename) {
         // Convert dot notation to path
         const fname = convertDotPathToFilePath(filename);
-        const sourcePath = path.join(this.dmlExamplesDir, fname);
+        
+        // Search for the file across all configured directories
+        let sourcePath = null;
+        for (const dir of this.dmlExamplesDirs) {
+            const candidatePath = path.join(dir, fname);
+            if (fs.existsSync(candidatePath)) {
+                sourcePath = candidatePath;
+                break;
+            }
+        }
         
         // Check if source file exists
-        if (!fs.existsSync(sourcePath)) {
-            throw new Error(`File not found: ${sourcePath}`);
+        if (!sourcePath) {
+            throw new Error(`File not found: ${fname} in any of: ${this.dmlExamplesDirs.join(', ')}`);
         }
         
         // Extract just the filename (not the full path)
         const baseFilename = path.basename(fname);
-        const targetPath = path.join(this.dmlExamplesDir, 'learned', baseFilename);
+        const targetPath = path.join(this.learnedExamplesDir, baseFilename);
         
         // Ensure learned directory exists
-        const learnedDir = path.join(this.dmlExamplesDir, 'learned');
-        if (!fs.existsSync(learnedDir)) {
-            fs.mkdirSync(learnedDir, { recursive: true });
+        if (!fs.existsSync(this.learnedExamplesDir)) {
+            fs.mkdirSync(this.learnedExamplesDir, { recursive: true });
         }
         
         // Check if file already exists in learned folder
@@ -1190,11 +1261,11 @@ Format your response in clear sections with headers.`;
      * Explain the last executed DML in a conversation
      */
     async explainLastExecution(conversationId) {
-        console.log(`[EXPLAIN] Starting explanation for conversation: ${conversationId}`);
+        debugLog(`[EXPLAIN] Starting explanation for conversation: ${conversationId}`);
         const convState = this.activeConversations.get(conversationId);
         
         if (!convState) {
-            console.log(`[EXPLAIN] No conversation state found for: ${conversationId}`);
+            debugLog(`[EXPLAIN] No conversation state found for: ${conversationId}`);
             const errorMsg = 'Error: No active conversation found.';
             if (this.outputCallback) {
                 this.outputCallback(`\n❌ ${errorMsg}\n`);
@@ -1202,11 +1273,11 @@ Format your response in clear sections with headers.`;
             return errorMsg;
         }
 
-        console.log(`[EXPLAIN] Conversation state exists. lastExecutedDml: ${!!convState.lastExecutedDml}, lastExecutedOutput: ${!!convState.lastExecutedOutput}`);
+        debugLog(`[EXPLAIN] Conversation state exists. lastExecutedDml: ${!!convState.lastExecutedDml}, lastExecutedOutput: ${!!convState.lastExecutedOutput}`);
 
         if (!convState.lastExecutedDml || !convState.lastExecutedOutput) {
             const errorMsg = 'Error: No DML execution to explain. Please run a DML file first using /run <filename>.';
-            console.log(`[EXPLAIN] ${errorMsg}`);
+            debugLog(`[EXPLAIN] ${errorMsg}`);
             if (this.outputCallback) {
                 this.outputCallback(`\n❌ ${errorMsg}\n`);
             }
@@ -1214,7 +1285,7 @@ Format your response in clear sections with headers.`;
         }
 
         try {
-            console.log(`[EXPLAIN] Generating explanation...`);
+            debugLog(`[EXPLAIN] Generating explanation...`);
             const dmlFile = convState.lastExecutedDmlFile || 'unknown';
             const dmlCode = convState.lastExecutedDml;
             const output = convState.lastExecutedOutput;
@@ -1222,7 +1293,7 @@ Format your response in clear sections with headers.`;
             // Delegate to shared helper
             return await this._generateExplanation(dmlFile, dmlCode, output);
         } catch (error) {
-            console.error(`[EXPLAIN] Error:`, error);
+            debugLog(`[EXPLAIN] Error:`, error);
             const errorMsg = `Error generating explanation: ${error.message}`;
             if (this.outputCallback) {
                 this.outputCallback(`\n❌ ${errorMsg}\n`);
@@ -1235,24 +1306,26 @@ Format your response in clear sections with headers.`;
      * Initialize fresh SWIPL instance for a conversation (no state persistence)
      */
     async getOrCreateSwiplForConversation(conversationId) {
-        console.log(`[ABORT] getOrCreateSwiplForConversation called with conversationId: ${conversationId}`);
-        console.log(`[ABORT] Current activeConversations Map size: ${this.activeConversations.size}`);
-        console.log(`[ABORT] Current activeConversations keys:`, Array.from(this.activeConversations.keys()));
+        debugLog(`[ABORT] getOrCreateSwiplForConversation called with conversationId: ${conversationId}`);
+        debugLog(`[ABORT] Current activeConversations Map size: ${this.activeConversations.size}`);
+        debugLog(`[ABORT] Current activeConversations keys:`, Array.from(this.activeConversations.keys()));
         
         let convState = this.activeConversations.get(conversationId);
         
         // Always create a fresh SWIPL instance - no state persistence
-        console.log(`[ABORT] Creating fresh SWIPL instance for conversation ${conversationId}`);
+        debugLog(`[ABORT] Creating fresh SWIPL instance for conversation ${conversationId}`);
 
         let swipl;
-        const workspaceDir = this.workspacePath;
+        // Always use global ~/.deepclause/mi.qsave path
+        const miQsavePath = this.miQsavePath || path.join(os.homedir(), '.deepclause', 'mi.qsave');
+        
         try {
             if (process.env.DML_DEV_MODE) {
                 swipl = await SWIPL({ 
                     arguments: ["-q"], 
                     on_output: (line) => {
-                        if (process.env.DEBUG) {
-                            console.log(`[${conversationId}] SWI-Prolog:`, line);
+                        if (process.env.DEBUG === '1') {
+                            debugLog(`[${conversationId}] SWI-Prolog:`, line);
                         }
                     }
                 });
@@ -1260,20 +1333,20 @@ Format your response in clear sections with headers.`;
                 swipl = await SWIPL({ 
                     arguments: ["-x", "mi.qsave"], 
                     on_output: (line) => {
-                        if (process.env.DEBUG) {
-                            console.log(`[${conversationId}] SWI-Prolog:`, line);
+                        if (process.env.DEBUG === '1') {
+                            debugLog(`[${conversationId}] SWI-Prolog:`, line);
                         }
                     },
                     preRun: [(module) => { 
-                        console.log("[PRE-RUN] Loading mi.qsave into SWIPL filesystem");
-                        const miData = fs.readFileSync(path.join(workspaceDir, 'mi.qsave'));
+                        debugLog(`[PRE-RUN] Loading mi.qsave from: ${miQsavePath}`);
+                        const miData = fs.readFileSync(miQsavePath);
                         module.FS.writeFile('mi.qsave', miData); }
                     ]
                 });
             }
 
         } catch (error) {
-            console.error(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
+            debugLog(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
             throw error;
         }
         
@@ -1290,12 +1363,12 @@ Format your response in clear sections with headers.`;
             };
             
             this.activeConversations.set(conversationId, convState);
-            console.log(`[ABORT] Added conversation to Map. New size: ${this.activeConversations.size}`);
-            console.log(`[ABORT] Verifying conversation was added:`, this.activeConversations.has(conversationId));
-            console.log(`Created fresh SWIPL instance for conversation ${conversationId}`);
+            debugLog(`[ABORT] Added conversation to Map. New size: ${this.activeConversations.size}`);
+            debugLog(`[ABORT] Verifying conversation was added:`, this.activeConversations.has(conversationId));
+            debugLog(`Created fresh SWIPL instance for conversation ${conversationId}`);
         } else {
             // Replace with fresh SWIPL instance and new abort controller
-            console.log(`[ABORT] Replacing existing SWIPL instance with fresh one for ${conversationId}`);
+            debugLog(`[ABORT] Replacing existing SWIPL instance with fresh one for ${conversationId}`);
             convState.swipl = swipl;
             convState.abortController = new AbortController();
             convState.status = 'active';
@@ -1321,7 +1394,7 @@ Format your response in clear sections with headers.`;
             convState.swipl = null;
             
             this.activeConversations.delete(conversationId);
-            console.log(`Cleaned up resources for conversation ${conversationId}`);
+            debugLog(`Cleaned up resources for conversation ${conversationId}`);
         }
     }
 
@@ -1332,18 +1405,18 @@ Format your response in clear sections with headers.`;
         const convState = this.activeConversations.get(conversationId);
         
         if (convState && convState.abortController) {
-            console.log(`[ABORT] Aborting conversation ${conversationId}`);
-            console.log(`[ABORT] AbortController exists:`, !!convState.abortController);
-            console.log(`[ABORT] Signal before abort:`, convState.abortController.signal.aborted);
+            debugLog(`[ABORT] Aborting conversation ${conversationId}`);
+            debugLog(`[ABORT] AbortController exists:`, !!convState.abortController);
+            debugLog(`[ABORT] Signal before abort:`, convState.abortController.signal.aborted);
             
             convState.abortController.abort();
             convState.status = 'aborted';
             
-            console.log(`[ABORT] Signal after abort:`, convState.abortController.signal.aborted);
-            console.log(`[ABORT] Abort signal sent for conversation ${conversationId}`);
+            debugLog(`[ABORT] Signal after abort:`, convState.abortController.signal.aborted);
+            debugLog(`[ABORT] Abort signal sent for conversation ${conversationId}`);
         } else {
-            console.log(`[ABORT] No active conversation found with id ${conversationId}`);
-            console.log(`[ABORT] Active conversations:`, Array.from(this.activeConversations.keys()));
+            debugLog(`[ABORT] No active conversation found with id ${conversationId}`);
+            debugLog(`[ABORT] Active conversations:`, Array.from(this.activeConversations.keys()));
         }
     }
 
@@ -1351,7 +1424,7 @@ Format your response in clear sections with headers.`;
      * Legacy method - aborts all active conversations
      */
     abortExecution() {
-        console.log(`Aborting all active conversations (${this.activeConversations.size} active)`);
+        debugLog(`Aborting all active conversations (${this.activeConversations.size} active)`);
         for (const [conversationId, convState] of this.activeConversations.entries()) {
             if (convState.abortController) {
                 convState.abortController.abort();
@@ -1426,7 +1499,7 @@ Format your response in clear sections with headers.`;
                     messageCount: conversation.messages?.length || 0
                 };
             } catch (error) {
-                console.error(`Error reading conversation ${file}:`, error);
+                debugLog(`Error reading conversation ${file}:`, error);
                 return null;
             }
         }).filter(Boolean);
@@ -1499,7 +1572,7 @@ Format your response in clear sections with headers.`;
             }
         } catch (err) {
             // LLM failed - log and continue with fallback
-            console.error('Failed to generate conversation title:', err);
+            debugLog('Failed to generate conversation title:', err);
             generatedTitle = null;
         }
 
@@ -1544,7 +1617,7 @@ Format your response in clear sections with headers.`;
     }
 
     async processNaturalLanguageInput(input, conversationId, conversationMessages = []) {
-        console.log(`[ABORT] processNaturalLanguageInput called with conversationId: ${conversationId}`);
+        debugLog(`[ABORT] processNaturalLanguageInput called with conversationId: ${conversationId}`);
         
         if (!conversationId) {
             throw new Error('conversationId is required for processNaturalLanguageInput');
@@ -1552,7 +1625,7 @@ Format your response in clear sections with headers.`;
 
         // Get or create SWIPL instance and abort controller for this conversation
         const convState = await this.getOrCreateSwiplForConversation(conversationId);
-        console.log(`[ABORT] Got convState from getOrCreateSwiplForConversation:`, convState ? 'exists' : 'null');
+        debugLog(`[ABORT] Got convState from getOrCreateSwiplForConversation:`, convState ? 'exists' : 'null');
         convState.status = 'executing';
         
         // Create session-specific DML save directory
@@ -1625,7 +1698,7 @@ Format your response in clear sections with headers.`;
                     description: "Generate new DML code from a natural language prompt",
                     inputSchema: z.object({ prompt: z.string() }),
                     execute: async ({ prompt }) => {
-                        const code = await generateDmlFromPrompt(prompt, this.learnedExamplesDir, this.outputCallback);
+                        const code = await generateDmlFromPrompt(prompt, this.learnedExamplesDir, this.outputCallback, this.miQsavePath);
                         if (code.startsWith('Error')) {
                             return { error: code };
                         }
@@ -1705,7 +1778,7 @@ Format your response in clear sections with headers.`;
                                 }
                             }
                         } catch (error) {
-                            console.log('Error listing session DML files:', error);
+                            debugLog('Error listing session DML files:', error);
                         }
                         
                         // Output the final message to the user with DML files list
@@ -1730,8 +1803,8 @@ Format your response in clear sections with headers.`;
                 // Skip 'system', 'error', 'streaming' messages
             }
 
-            console.log('DML Agent processing input with messages:', messages);
-            console.log('[ABORT] Starting streamText with abort signal:', convState.abortController?.signal.aborted);
+            debugLog('DML Agent processing input with messages:', messages);
+            debugLog('[ABORT] Starting streamText with abort signal:', convState.abortController?.signal.aborted);
 
             const agentConfig = getAgentConfig();
                 const result = await streamText({
@@ -1746,7 +1819,7 @@ Format your response in clear sections with headers.`;
                 temperature: agentConfig.temperature,
                 abortSignal: convState.abortController?.signal,
                 onAbort: () => {
-                    console.log('[ABORT] streamText onAbort callback triggered!');
+                    debugLog('[ABORT] streamText onAbort callback triggered!');
                     if (this.outputCallback) {
                         this.outputCallback('\n<log>⏹️ Execution aborted</log>\n');
                     }
@@ -1758,11 +1831,11 @@ Format your response in clear sections with headers.`;
             for await (const chunk of result.fullStream) {
                 chunkCount++;
                 if (chunkCount % 10 === 0) {
-                    console.log(`[ABORT] Chunk ${chunkCount}, abort signal:`, convState.abortController?.signal.aborted);
+                    debugLog(`[ABORT] Chunk ${chunkCount}, abort signal:`, convState.abortController?.signal.aborted);
                 }
                 
                 if (convState.abortController?.signal.aborted) {
-                    console.log('[ABORT] Abort detected in streamText loop at chunk', chunkCount);
+                    debugLog('[ABORT] Abort detected in streamText loop at chunk', chunkCount);
                     break;
                 }
                 
