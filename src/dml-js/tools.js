@@ -2845,7 +2845,7 @@ class BashExecutorTool extends Tool {
                 type: "boolean",
                 description: "If true, connects stdin/stdout directly to the terminal (CLI mode only)",
                 nullable: true,
-                default: false
+                default: true
             }
         };
         this.output_type = "string";
@@ -2967,7 +2967,7 @@ class BashExecutorTool extends Tool {
             const isTTY = process.stdin.isTTY && process.stdout.isTTY;
             const useInteractive = interactive && isTTY;
             
-            // For interactive mode, use spawnSync which properly handles TTY
+            // For interactive mode, use full TTY inheritance with script to capture output
             if (useInteractive) {
                 this.streamProgress(`🖥️ Running in interactive mode...`);
                 
@@ -2976,9 +2976,13 @@ class BashExecutorTool extends Tool {
                     process.stdin.setRawMode(false);
                 }
                 
-                const result = spawnSync('/bin/bash', ['-c', command], {
+                // Use 'script' command to capture output while maintaining full TTY
+                // This creates a typescript file that captures the session
+                const scriptFile = path.join(cwd, `.bash_output_${Date.now()}.txt`);
+                
+                const result = spawnSync('script', ['-q', '-c', command, scriptFile], {
                     cwd: cwd,
-                    stdio: [0, 1, 2], // Use file descriptors directly for proper TTY
+                    stdio: 'inherit', // Full TTY inheritance for proper interactive behavior
                     env: {
                         ...process.env,
                         PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
@@ -2987,15 +2991,42 @@ class BashExecutorTool extends Tool {
                     timeout: timeout * 1000
                 });
                 
+                // Read captured output from script file
+                let capturedOutput = '';
+                try {
+                    if (fs.existsSync(scriptFile)) {
+                        capturedOutput = fs.readFileSync(scriptFile, 'utf-8');
+                        // Clean up the script file
+                        fs.unlinkSync(scriptFile);
+                        // Remove ANSI escape codes for cleaner output in the result
+                        // but keep the raw output for display purposes
+                    }
+                } catch (e) {
+                    // Ignore errors reading/cleaning up script file
+                }
+                
                 if (result.error) {
                     return `${warningOutput}❌ ERROR: ${result.error.message}`;
                 }
                 
                 if (result.signal === 'SIGTERM') {
-                    return `${warningOutput}❌ ERROR: Command timed out after ${timeout} seconds.`;
+                    return `${warningOutput}❌ ERROR: Command timed out after ${timeout} seconds.\n\n**Captured output:**\n\`\`\`\n${capturedOutput || '(no output)'}\n\`\`\``;
                 }
                 
-                return `${warningOutput}✅ Interactive command completed with exit code: ${result.status}`;
+                if (result.status !== 0) {
+                    return `${warningOutput}Exit code: ${result.status}\n\n**Captured output:**\n\`\`\`\n${capturedOutput || '(no output)'}\n\`\`\``;
+                }
+                
+                // Truncate very long output
+                const maxOutput = 50000;
+                let output = capturedOutput || '';
+                if (output.length > maxOutput) {
+                    output = output.slice(0, maxOutput / 2) + 
+                        "\n\n... [OUTPUT TRUNCATED - " + (output.length - maxOutput) + " bytes omitted] ...\n\n" +
+                        output.slice(-maxOutput / 2);
+                }
+                
+                return `${warningOutput}Exit code: 0\n\n**Command output:**\n\`\`\`\n${output}\n\`\`\``;
             }
             
             // Use async spawn for non-interactive commands

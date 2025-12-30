@@ -483,6 +483,94 @@ npm run build:win
 
 Binaries will be output to `dist/`.
 
+### CLI Installation (Global)
+
+The DeepClause CLI can be installed globally to make the `deepclause` command available in your shell:
+
+```bash
+# From the repository root
+npm link
+
+# Now you can run DeepClause from any directory
+deepclause
+```
+
+Or install directly from npm (when published):
+
+```bash
+npm install -g deepclause-cli-wasm
+```
+
+#### CLI Directory Structure
+
+The CLI uses the following directories:
+
+- **`~/.deepclause/`** - Global DeepClause directory
+  - `settings.json` - API keys and model configuration
+  - `dml_examples/` - Global DML examples library
+  - `dml_examples/learned/` - User's learned/saved DML skills
+  - `mi.qsave` - Prolog saved state
+  - `config.json` - MCP server configuration
+
+- **`./.deepclause/`** (optional) - Per-project local overrides
+  - `dml_examples/` - Project-specific DML examples
+
+#### Path Resolutionmain
+
+When running `/create`, `/run`, or `/learn` commands, the CLI searches for DML files in this order:
+1. Local `./.deepclause/dml_examples/` (if exists in current directory)
+2. Global `~/.deepclause/dml_examples/`
+
+This allows project-specific DML customizations while maintaining global defaults.
+
+#### CLI Usage
+
+```bash
+# Show help
+deepclause --help
+deepclause -h
+
+# Start the interactive CLI
+deepclause
+
+# Headless mode: execute a command and exit
+deepclause -x "<prompt>"
+deepclause --execute "<prompt>"
+```
+
+#### Headless Mode
+
+The `-x` (or `--execute`) flag runs a single command or prompt and exits immediately. This is useful for scripting and automation:
+
+```bash
+# List available DML files
+deepclause -x "/list"
+
+# Run a specific DML file
+deepclause -x "/run myagent.dml"
+
+# Generate new DML code
+deepclause -x "/create a web search agent"
+
+# Run a natural language prompt
+deepclause -x "Search for Python tutorials and summarize the top results"
+```
+
+#### Interactive Commands
+
+# Or run via npm
+npm run cli
+```
+
+Inside the CLI:
+- `/create <description>` - Generate new DML from description
+- `/run <filename>` - Execute a DML file
+- `/save <filename>` - Save generated DML
+- `/learn <filename>` - Copy DML to learned examples
+- `/list` - List available DML files
+- `/explain` - Explain last execution
+- `/help` - Show all commands
+
 ### Contributing
 
 DeepClause is in active development. Contributions welcome! Areas of focus:

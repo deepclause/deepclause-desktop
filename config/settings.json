@@ -1,16 +1,24 @@
 {
-  "mcp_servers": [
-    {
-      "name": "playwright-mcp",
-      "type": "stdio",
-      "command": "npx",
-      "args": [ "@playwright/mcp@latest", "--extension" ]
-    }
-  ],
+  "mcp_servers": [],
   
   "models": {
     "goal": { "provider": "google", "name": "gemini-2.5-flash", "temperature": 0.0 },
     "converter": { "provider": "google", "name": "gemini-2.5-pro", "temperature": 0.1 },
     "agent": { "provider": "google", "name": "gemini-2.5-flash", "temperature": 0.0 }
+  },
+  
+  "defaultTools": {
+    "brave_search": true,
+    "you_search": false,
+    "google_search": false,
+    "google_scholar_search": true,
+    "visit_webpage": true,
+    "workspace_reader": true,
+    "file_downloader": true,
+    "visualizer": true,
+    "diagram_generator": true,
+    "data_analyzer": true,
+    "bash_executor": false,
+    "linux_vm": false
   }
 }
