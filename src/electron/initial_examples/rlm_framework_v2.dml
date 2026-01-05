@@ -1,0 +1,700 @@
+% rlm_framework_v2.dml - RLM Framework with Episodic Memory (Simplified)
+% Memory search is itself an RLM domain - dogfooding the framework!
+%
+% Key simplifications:
+% - Memory stored as simple Prolog facts in .pl files
+% - Memory search uses RLM with file exploration actions
+% - No complex pattern extraction - just store and search episodes
+
+%% =============================================================
+%% CONFIGURATION
+%% =============================================================
+
+% Memory location (project-local)
+memory_base_path('.deepclause/memory').
+
+%% =============================================================
+%% VM OUTPUT PARSING
+%% =============================================================
+
+
+% Simpler version that just extracts output (ignores exit code)
+parse_vm_output(RawOutput, Output) :-
+    % Try to parse the expected format
+    (sub_string(RawOutput, Before, _, _, "Command output:\n") ->
+        % Extract exit code from first line
+        sub_string(RawOutput, 0, Before, _, Header),
+        (sub_string(Header, _, _, 0, CodeStr),
+         atom_string(CodeAtom, CodeStr),
+         atom_number(CodeAtom, ExitCode) -> true ; ExitCode = -1),
+        % Extract everything after "Command output:\n"
+        sub_string(RawOutput, _, _, 0, AfterMarker),
+        string_length("Command output:\n", MarkerLen),
+        (Before > 0 ->
+            Start is Before + MarkerLen,
+            sub_string(RawOutput, Start, _, 0, Output)
+        ;
+            Output = AfterMarker
+        )
+    ;
+        % Fallback: return raw output if format doesn't match
+        Output = RawOutput,
+        ExitCode = 0
+    ).
+
+% Execute VM command and parse output
+vm_run(Cmd, Output) :-
+    tool(vm_exec(Cmd), RawResult),
+    parse_vm_output(RawResult, Output).
+
+
+
+% Helper to check if a character code is a digit (0-9)
+is_digit_code(Code) :- Code >= 0'0, Code =< 0'9.
+
+%% =============================================================
+%% DOMAIN CONFIGURATION
+%% =============================================================
+
+% Domain: code_qa - Code exploration and Q&A
+domain_config(code_qa, Config) :-
+    Config = config{
+        name: "Code Q&A",
+        description: "Explore codebases and answer questions about code",
+        available_actions: [
+            action_spec(list_files(Path), "List files in a directory (e.g., list_files(\"src\") or list_files(\".\"))"),
+            action_spec(read_file(FilePath), "Read contents of a specific file (e.g., read_file(\"src/main.py\"))"),
+            action_spec(search_pattern(Pattern), "Grep search for a pattern across the codebase (e.g., search_pattern(\"authenticate\"))"),
+            action_spec(analyze_structure, "Get an overview of all code files in the codebase"),
+            action_spec(analyze_chunk(Content, Question), "**RECURSIVE LLM**: Invoke a sub-LLM to analyze content with a specific question"),
+            action_spec(analyze_observations(ObsIds, Question), "**RECURSIVE LLM**: Analyze specific past observations by their IDs (e.g., analyze_observations([1,3], \"What do these have in common?\"))"),
+            action_spec(run_python(Code), "**CODE EXECUTION**: Execute Python code directly"),
+            action_spec(generate_and_run_python(Task), "**LLM + CODE**: Have an LLM generate and execute Python for a task"),
+            action_spec(finish(Answer), "Provide the final answer when you have enough information")
+        ],
+        guidelines: [
+            "Start by understanding the codebase structure if you haven't already",
+            "Use search_pattern to find relevant code quickly",
+            "Read specific files when you need detailed understanding",
+            "Use RECURSIVE LLM calls (analyze_chunk/analyze_last_observation) when code is complex and needs interpretation",
+            "Use PYTHON EXECUTION when you need to parse/transform data, count, or do precise text processing",
+            "Gather enough evidence before finishing",
+            "If stuck, try different search patterns or explore related files"
+        ],
+        max_iterations: 15
+    }.
+
+% Domain: data_analysis - Data analysis with Python
+domain_config(data_analysis, Config) :-
+    Config = config{
+        name: "Data Analysis",
+        description: "Analyze data files using Python",
+        available_actions: [
+            action_spec(list_files(Path), "List files in a directory to find data files"),
+            action_spec(read_file(FilePath), "Read contents of a data file (CSV, JSON, etc.)"),
+            action_spec(run_python(Code), "**CODE EXECUTION**: Execute Python code for data analysis (pandas, numpy available)"),
+            action_spec(generate_and_run_python(Task), "**LLM + CODE**: Describe a data task and have Python code generated and executed"),
+            action_spec(analyze_output(Output, Question), "**RECURSIVE LLM**: Analyze Python output or data with a specific question"),
+            action_spec(finish(Result), "Provide the final analysis result")
+        ],
+        guidelines: [
+            "Start by listing files to find relevant data",
+            "Read data files to understand their structure",
+            "Use Python for data manipulation - pandas and numpy are available",
+            "generate_and_run_python is great for complex analysis tasks",
+            "Use analyze_output to interpret results before finishing"
+        ],
+        max_iterations: 20
+    }.
+
+% Domain: memory_search - RLM domain for searching episodic memory!
+domain_config(memory_search, Config) :-
+    Config = config{
+        name: "Memory Search",
+        description: "Search episodic memory for relevant past experiences",
+        available_actions: [
+            action_spec(list_episodes, "List all episode files in memory to see what's available"),
+            action_spec(read_episode(EpisodeId), "Read a specific episode file (e.g., read_episode(\"ep_1234567890\"))"),
+            action_spec(search_memory(Pattern), "Grep search across all episodes for a keyword or pattern"),
+            action_spec(analyze_relevance(Content, Task), "**RECURSIVE LLM**: Analyze if episode content is relevant to the task"),
+            action_spec(finish(Hints), "Return hints/advice for the main task based on what you found")
+        ],
+        guidelines: [
+            "Start with list_episodes or search_memory to find relevant episodes",
+            "Read promising episodes to understand what happened",
+            "Focus on extracting actionable hints: what worked, what failed, strategies used",
+            "Be concise in your hints - they will be shown to the main agent"
+        ],
+        max_iterations: 5  % Keep memory search quick
+    }.
+
+%% =============================================================
+%% @-PREDICATE SPECIFICATIONS
+%% =============================================================
+
+% Parse action term from LLM text response
+parse_action_term(Text, ActionTerm) :-
+    (term_string(ActionTerm, Text) ->
+        true
+    ;
+        ActionTerm = parse_error(Text)
+    ).
+
+% Core RLM decision predicate - uses chat interface for reliability
+rlm_decide_action(Task, ContextInfo, FormattedHistory, AvailableActions, ActionResult) :-
+    clear_memory,
+    system("You are an RLM (Recursive Language Model) agent. You explore, analyze, and solve tasks step by step.
+
+Your ONLY output must be a Prolog term in this exact format:
+action(ActionTerm, \"Reasoning\")
+
+Examples:
+- action(list_files(\".\"), \"Need to see the directory structure\")
+- action(read_file(\"src/main.py\"), \"Reading the main entry point\")
+- action(search_pattern(\"TODO\"), \"Looking for TODO comments\")
+- action(finish(\"The answer is X\"), \"Found sufficient evidence\")"),
+    observation("Task: {Task}"),
+    observation("Context:\n{ContextInfo}"),
+    observation("Available Actions:\n{AvailableActions}"),
+    observation("Action History:\n{FormattedHistory}"),
+    chat("Choose your next action. Output ONLY: action(ActionTerm, \"Reasoning\")", ResponseText),
+    parse_action_term(ResponseText, ActionResult).
+
+% Memory-aware decision - uses chat interface for reliability  
+rlm_decide_action_with_memory(Task, ContextInfo, FormattedHistory, MemoryHints, AvailableActions, ActionResult) :-
+    clear_memory,
+    system("You are an RLM (Recursive Language Model) agent with episodic memory. You learn from past experiences to solve tasks better.
+
+Your ONLY output must be a Prolog term in this exact format:
+action(ActionTerm, \"Reasoning\")
+
+Examples:
+- action(list_files(\".\"), \"Need to see the directory structure\")
+- action(read_file(\"src/main.py\"), \"Reading the main entry point\")
+- action(search_pattern(\"TODO\"), \"Looking for TODO comments\")
+- action(analyze_observations([1,2], \"What patterns do these show?\"), \"Need to understand earlier findings\")
+- action(finish(\"The answer is X\"), \"Found sufficient evidence\")
+
+IMPORTANT: Learn from the memory hints - they contain strategies that worked or failed in similar past tasks."),
+    observation("Task: {Task}"),
+    observation("Context:\n{ContextInfo}"),
+    observation("Memory Hints from Past Tasks:\n{MemoryHints}"),
+    observation("Available Actions:\n{AvailableActions}"),
+    observation("Action History:\n{FormattedHistory}"),
+    chat("Choose your next action based on the task and memory hints. Output ONLY: action(ActionTerm, \"Reasoning\")", ResponseText),
+    parse_action_term(ResponseText, ActionResult).
+
+% Sub-LLM for chunk analysis
+analyze_chunk_llm(Chunk, Question, Analysis) :-
+    @("Analyze this content to answer the question.
+    
+    **Question:** {Question}
+    
+    **Content:**
+    {Chunk}
+    
+    Provide a concise but thorough analysis.").
+
+% Generate Python code
+generate_python_code(Task, Context, Code) :-
+    @("Generate Python code for this task.
+    
+    **Task:** {Task}
+    **Context:** {Context}
+    
+    Output ONLY executable Python 3 code, no markdown.").
+
+% Generate episode summary after completion
+generate_episode_summary(Task, Trajectory, Result, Outcome, Summary) :-
+    @("Summarize this completed task for future reference.
+    
+    **Task:** {Task}
+    **Outcome:** {Outcome}
+    **Result:** {Result}
+    
+    **Actions taken:**
+    {Trajectory}
+    
+    Generate a brief summary (2-3 sentences) that would help someone doing a similar task in the future.
+    Include what worked well or what went wrong.
+    
+    Output just the summary text, no formatting.").
+
+%% =============================================================
+%% HISTORY FORMATTING
+%% =============================================================
+
+format_history([], "No actions taken yet.").
+format_history(History, Formatted) :-
+    History \= [],
+    format_history_items(History, 1, Items),
+    atomic_list_concat(Items, "\n\n---\n\n", ItemsStr),
+    format(string(Formatted), "=== Action History ===\n\n~w", [ItemsStr]).
+
+format_history_items([], _, []).
+format_history_items([step(Action, Observation)|Rest], N, [Item|RestItems]) :-
+    format(string(ObsStr), "~w", [Observation]),
+    string_length(ObsStr, Len),
+    (Len > 2000 -> 
+        sub_string(ObsStr, 0, 2000, _, Trunc),
+        format(string(ObsDisplay), "~w\n...[truncated, ~w chars total]", [Trunc, Len])
+    ; 
+        ObsDisplay = ObsStr
+    ),
+    format(string(Item), "**[Obs #~w] Action: `~w`**\n\n~w", [N, Action, ObsDisplay]),
+    N1 is N + 1,
+    format_history_items(Rest, N1, RestItems).
+
+format_actions([], "").
+format_actions([action_spec(Template, Desc)|Rest], Formatted) :-
+    format(string(Line), "- ~w: ~w", [Template, Desc]),
+    format_actions(Rest, RestFormatted),
+    (RestFormatted \= "" ->
+        format(string(Formatted), "~w\n~w", [Line, RestFormatted])
+    ;
+        Formatted = Line
+    ).
+
+%% =============================================================
+%% CONTEXT HELPERS
+%% =============================================================
+
+% Extract info from context (handles both dict and memory_context term)
+get_context_info(memory_context(_, Info), Info) :- !.
+get_context_info(Context, Info) :- 
+    get_dict(info, Context, Info).
+
+%% =============================================================
+%% MAIN RLM LOOP
+%% =============================================================
+
+% Base case: max iterations reached
+rlm_loop(_, _, _, History, Iter, MaxIter, failure, History, "Max iterations reached") :-
+    Iter > MaxIter, !.
+
+% Main loop - without memory hints
+rlm_loop(Domain, Task, Context, History, Iter, MaxIter, Outcome, FinalHistory, Result) :-
+    Iter =< MaxIter,
+    log(task="RLM ~w - Step ~w/~w", [Domain, Iter, MaxIter]),
+    
+    domain_config(Domain, Config),
+    format_history(History, FormattedHistory),
+    get_dict(available_actions, Config, AvailableActionsList),
+    format_actions(AvailableActionsList, AvailableActions),
+
+    get_context_info(Context, ContextInfo),
+    
+    (rlm_decide_action(Task, ContextInfo, FormattedHistory, AvailableActions, Decision) ->
+        process_decision(Domain, Task, Context, History, Iter, MaxIter, Decision, Outcome, FinalHistory, Result)
+    ;
+        % LLM call failed - record error and retry
+        log(error="Failed to get decision from LLM, retrying..."),
+        append(History, [step(llm_error, "LLM failed to produce a valid decision. Try again.")], NewHistory),
+        NextIter is Iter + 1,
+        rlm_loop(Domain, Task, Context, NewHistory, NextIter, MaxIter, Outcome, FinalHistory, Result)
+    ).
+
+% Main loop - with memory hints
+rlm_loop_with_memory(Domain, Task, Context, MemoryHints, History, Iter, MaxIter, Outcome, FinalHistory, Result) :-
+    Iter > MaxIter, !,
+    Outcome = failure,
+    FinalHistory = History,
+    Result = "Max iterations reached".
+
+rlm_loop_with_memory(Domain, Task, Context, MemoryHints, History, Iter, MaxIter, Outcome, FinalHistory, Result) :-
+    Iter =< MaxIter,
+    log(task="RLM ~w - Step ~w/~w", [Domain, Iter, MaxIter]),
+    
+    domain_config(Domain, Config),
+    format_history(History, FormattedHistory),
+    get_dict(available_actions, Config, AvailableActionsList),
+    format_actions(AvailableActionsList, AvailableActions),
+
+    get_context_info(Context, ContextInfo),
+    
+    (rlm_decide_action_with_memory(Task, ContextInfo, FormattedHistory, MemoryHints, AvailableActions, Decision) -> 
+        log(task="Decision: {Decision}"),
+        process_decision_with_memory(Domain, Task, Context, MemoryHints, History, Iter, MaxIter, Decision, Outcome, FinalHistory, Result)
+    ;
+        % LLM call failed - record error and retry
+        log(error="Failed to get decision from LLM, retrying..."),
+        append(History, [step(llm_error, "LLM failed to produce a valid decision. Try again.")], NewHistory),
+        NextIter is Iter + 1,
+        rlm_loop_with_memory(Domain, Task, Context, MemoryHints, NewHistory, NextIter, MaxIter, Outcome, FinalHistory, Result)
+    ).
+
+% Process decision - finish action
+process_decision(_, _, _, History, _, _, action(finish(Answer), _), success, History, Answer) :- !.
+
+process_decision_with_memory(_, _, _, _, History, _, _, action(finish(Answer), _), success, History, Answer) :- !.
+
+% Process decision - execute action and continue
+process_decision(Domain, Task, Context, History, Iter, MaxIter, action(Action, Reasoning), Outcome, FinalHistory, Result) :-
+    Action \= finish(_),
+    log(task="Action: {Action}"),
+    log(task="Reasoning: {Reasoning}"),
+    execute_action(Domain, Action, History, Context, Observation),
+    append(History, [step(Action, Observation)], NewHistory),
+    NextIter is Iter + 1,
+    rlm_loop(Domain, Task, Context, NewHistory, NextIter, MaxIter, Outcome, FinalHistory, Result).
+
+process_decision_with_memory(Domain, Task, Context, MemoryHints, History, Iter, MaxIter, action(Action, Reasoning), Outcome, FinalHistory, Result) :-
+    Action \= finish(_),
+    log(task="Action: {Action}"),
+    log(task="Reasoning: {Reasoning}"),
+    execute_action(Domain, Action, History, Context, Observation),
+    append(History, [step(Action, Observation)], NewHistory),
+    NextIter is Iter + 1,
+    rlm_loop_with_memory(Domain, Task, Context, MemoryHints, NewHistory, NextIter, MaxIter, Outcome, FinalHistory, Result).
+
+% Handle parse errors
+process_decision(Domain, Task, Context, History, Iter, MaxIter, BadDecision, Outcome, FinalHistory, Result) :-
+    BadDecision \= action(_, _),
+    log(error="Parse error: {BadDecision}"),
+    append(History, [step(parse_error, "Output: action(ActionTerm, Reasoning)")], NewHistory),
+    NextIter is Iter + 1,
+    rlm_loop(Domain, Task, Context, NewHistory, NextIter, MaxIter, Outcome, FinalHistory, Result).
+
+process_decision_with_memory(Domain, Task, Context, MemoryHints, History, Iter, MaxIter, BadDecision, Outcome, FinalHistory, Result) :-
+    BadDecision \= action(_, _),
+    log(error="Parse error: {BadDecision}"),
+    append(History, [step(parse_error, "Output: action(ActionTerm, Reasoning)")], NewHistory),
+    NextIter is Iter + 1,
+    rlm_loop_with_memory(Domain, Task, Context, MemoryHints, NewHistory, NextIter, MaxIter, Outcome, FinalHistory, Result).
+
+%% =============================================================
+%% ACTION EXECUTION - Dispatching
+%% =============================================================
+
+execute_action(code_qa, Action, History, Context, Obs) :-
+    log(task="Executing Code Action {Action}..."),
+    (execute_code_action(Action, History, Context, Obs) -> true
+    ; format(string(Obs), "Unknown code_qa action: ~w", [Action])
+    ).
+
+execute_action(data_analysis, Action, History, Context, Obs) :-
+    (execute_data_action(Action, History, Context, Obs) -> true
+    ; format(string(Obs), "Unknown data_analysis action: ~w", [Action])
+    ).
+
+execute_action(memory_search, Action, History, Context, Obs) :-
+    (execute_memory_action(Action, History, Context, Obs) -> true
+    ; format(string(Obs), "Unknown memory_search action: ~w", [Action])
+    ).
+
+%% =============================================================
+%% CODE_QA ACTIONS
+%% =============================================================
+
+execute_code_action(list_files(Path), _, Context, Obs) :- !,
+    get_dict(directory, Context, Dir),
+    format(string(Cmd), "find ~w/~w -maxdepth 2 -type f 2>/dev/null | grep -v node_modules | grep -v __pycache__ | grep -v '.git' | head -100", [Dir, Path]),
+    vm_run(Cmd, Result),
+    (Result \= "" -> 
+        format(string(Obs), "=== Files in '~w' ===\n~w", [Path, Result])
+    ; 
+        format(string(Obs), "=== Files in '~w' ===\nNo files found in this directory.", [Path])
+    ).
+
+execute_code_action(read_file(FilePath), _, Context, Obs) :- !,
+    get_dict(directory, Context, Dir),
+    format(string(Cmd), "head -c 50000 '~w/~w' 2>/dev/null", [Dir, FilePath]),
+    vm_run(Cmd, Content),
+    (Content \= "" -> 
+        format(string(Obs), "=== Contents of '~w' ===\n~w", [FilePath, Content])
+    ; 
+        format(string(Obs), "=== Error ===\nFile '~w' not found or empty.", [FilePath])
+    ).
+
+execute_code_action(search_pattern(Pattern), _, Context, Obs) :- !,
+    get_dict(directory, Context, Dir),
+    format(string(Cmd), "grep -rn --include='*.py' --include='*.js' --include='*.ts' --include='*.pl' --include='*.dml' --include='*.md' --include='*.json' '~w' ~w 2>/dev/null | head -50", [Pattern, Dir]),
+    vm_run(Cmd, Result),
+    (Result \= "" -> 
+        format(string(Obs), "=== Search results for '~w' ===\nFormat: file:line:content\n\n~w", [Pattern, Result])
+    ; 
+        format(string(Obs), "=== Search results for '~w' ===\nNo matches found.", [Pattern])
+    ).
+
+execute_code_action(analyze_structure, _, Context, Obs) :- !,
+    get_dict(directory, Context, Dir),
+    format(string(Cmd), "find ~w -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.pl' -o -name '*.dml' \\) 2>/dev/null | grep -v node_modules | head -100", [Dir]),
+    vm_run(Cmd, Result),
+    (Result \= "" ->
+        format(string(Obs), "=== Codebase Structure ===\nCode files found:\n~w", [Result])
+    ;
+        format(string(Obs), "=== Codebase Structure ===\nNo code files found.", [])
+    ).
+
+execute_code_action(analyze_chunk(Chunk, Question), _, _, Obs) :- !,
+    analyze_chunk_llm(Chunk, Question, Analysis),
+    format(string(Obs), "=== Analysis Result ===\nQuestion: ~w\n\n~w", [Question, Analysis]).
+
+execute_code_action(analyze_observations(ObsIds, Question), History, _, Obs) :- !,
+    (ObsIds \= [] ->
+        collect_observations_by_ids(History, ObsIds, 1, CollectedObs),
+        (CollectedObs \= "" ->
+            analyze_chunk_llm(CollectedObs, Question, Analysis),
+            format(string(Obs), "=== Analysis of Observations ~w ===\nQuestion: ~w\n\n~w", [ObsIds, Question, Analysis])
+        ;
+            format(string(Obs), "=== Error ===\nNo observations found for IDs: ~w", [ObsIds])
+        )
+    ;
+        Obs = "=== Error ===\nNo observation IDs provided. Use analyze_observations([1,2,3], \"Question\")."
+    ).
+
+% Helper to collect observations by their IDs
+collect_observations_by_ids([], _, _, "").
+collect_observations_by_ids([step(Action, Observation)|Rest], ObsIds, N, Collected) :-
+    (member(N, ObsIds) ->
+        format(string(ThisObs), "--- Observation #~w (Action: ~w) ---\n~w\n\n", [N, Action, Observation]),
+        N1 is N + 1,
+        collect_observations_by_ids(Rest, ObsIds, N1, RestCollected),
+        atom_concat(ThisObs, RestCollected, Collected)
+    ;
+        N1 is N + 1,
+        collect_observations_by_ids(Rest, ObsIds, N1, Collected)
+    ).
+
+execute_code_action(run_python(Code), _, _, Obs) :- !,
+    open("_temp.py", write, S), write(S, Code), close(S),
+    vm_run("python3 _temp.py 2>&1", Result),
+    format(string(Obs), "=== Python Execution ===\nCode:\n```python\n~w\n```\n\nOutput:\n~w", [Code, Result]).
+
+execute_code_action(generate_and_run_python(Task), History, Context, Obs) :- !,
+    get_dict(directory, Context, Dir),
+    (History \= [], last(History, step(_, LastObs)) ->
+        format(string(Ctx), "Working directory: ~w\nPrevious observation:\n~w", [Dir, LastObs])
+    ;
+        format(string(Ctx), "Working directory: ~w", [Dir])
+    ),
+    generate_python_code(Task, Ctx, Code),
+    open("_temp.py", write, S), write(S, Code), close(S),
+    vm_run("python3 _temp.py 2>&1", Result),
+    format(string(Obs), "=== Generated Python for: ~w ===\nCode:\n```python\n~w\n```\n\nOutput:\n~w", [Task, Code, Result]).
+
+%% =============================================================
+%% DATA_ANALYSIS ACTIONS
+%% =============================================================
+
+execute_data_action(list_files(Path), H, C, Obs) :- !, execute_code_action(list_files(Path), H, C, Obs).
+execute_data_action(read_file(F), H, C, Obs) :- !, execute_code_action(read_file(F), H, C, Obs).
+execute_data_action(run_python(Code), H, C, Obs) :- !, execute_code_action(run_python(Code), H, C, Obs).
+execute_data_action(generate_and_run_python(T), H, C, Obs) :- !, execute_code_action(generate_and_run_python(T), H, C, Obs).
+
+execute_data_action(analyze_output(Output, Question), _, _, Obs) :- !,
+    analyze_chunk_llm(Output, Question, Analysis),
+    format(string(Obs), "=== Data Analysis ===\nQuestion: ~w\n\n~w", [Question, Analysis]).
+
+%% =============================================================
+%% MEMORY_SEARCH ACTIONS (RLM searching its own memory!)
+%% Uses memory_context(MemDir, Info) term instead of dict
+%% =============================================================
+
+execute_memory_action(list_episodes, _, memory_context(MemDir, _), Obs) :- !,
+    format(string(Cmd), "ls -1 ~w/*.pl 2>/dev/null | xargs -I {} basename {} .pl", [MemDir]),
+    vm_run(Cmd, Result),
+    (Result \= "" ->
+        format(string(Obs), "=== Available Episodes ===\n~w", [Result])
+    ;
+        Obs = "=== Available Episodes ===\nNo episodes found in memory."
+    ).
+
+execute_memory_action(read_episode(EpisodeId), _, memory_context(MemDir, _), Obs) :- !,
+    format(string(Cmd), "cat '~w/~w.pl' 2>/dev/null", [MemDir, EpisodeId]),
+    vm_run(Cmd, Content),
+    (Content \= "" ->
+        format(string(Obs), "=== Episode: ~w ===\n~w", [EpisodeId, Content])
+    ;
+        format(string(Obs), "=== Error ===\nEpisode '~w' not found.", [EpisodeId])
+    ).
+
+execute_memory_action(search_memory(Pattern), _, memory_context(MemDir, _), Obs) :- !,
+    format(string(Cmd), "grep -l '~w' ~w/*.pl 2>/dev/null | xargs -I {} basename {} .pl", [Pattern, MemDir]),
+    vm_run(Cmd, MatchingFiles),
+    (MatchingFiles \= "" ->
+        format(string(Cmd2), "grep -h '~w' ~w/*.pl 2>/dev/null", [Pattern, MemDir]),
+        vm_run(Cmd2, Matches),
+        format(string(Obs), "=== Memory Search for '~w' ===\nMatching episodes:\n~w\n\nRelevant content:\n~w", [Pattern, MatchingFiles, Matches])
+    ;
+        format(string(Obs), "=== Memory Search for '~w' ===\nNo matching episodes found.", [Pattern])
+    ).
+
+execute_memory_action(analyze_relevance(Content, Task), _, _, Obs) :- !,
+    format(string(Question), "Is this relevant to the task: ~w? Extract any useful hints, strategies, or warnings.", [Task]),
+    analyze_chunk_llm(Content, Question, Analysis),
+    format(string(Obs), "=== Relevance Analysis ===\nTask: ~w\n\n~w", [Task, Analysis]).
+
+%% =============================================================
+%% EPISODIC MEMORY SYSTEM (Simplified)
+%% =============================================================
+
+% Get memory directory for a domain
+memory_dir(Domain, MemDir) :-
+    memory_base_path(Base),
+    format(atom(MemDir), "~w/~w", [Base, Domain]).
+
+% Ensure memory directory exists
+ensure_memory_dir(Domain) :-
+    memory_dir(Domain, MemDir),
+    format(string(Cmd), "mkdir -p '~w'", [MemDir]),
+    vm_run(Cmd, _).
+
+% Store an episode (simple .pl file with facts)
+store_episode(Domain, Task, Trajectory, Result, Outcome) :-
+    ensure_memory_dir(Domain),
+    memory_dir(Domain, MemDir),
+    
+    % Generate episode ID from timestamp
+    get_time(Now),
+    format(atom(EpisodeId), "ep_~0f", [Now]),
+    
+    % Generate summary
+    format_history(Trajectory, TrajStr),
+    generate_episode_summary(Task, TrajStr, Result, Outcome, Summary),
+    
+    % Write episode file
+    format(atom(FilePath), "~w/~w.pl", [MemDir, EpisodeId]),
+    open(FilePath, write, S),
+    format(S, "% Episode: ~w~n", [EpisodeId]),
+    format(S, "episode_task(~q).~n", [Task]),
+    format(S, "episode_outcome(~w).~n", [Outcome]),
+    format(S, "episode_result(~q).~n", [Result]),
+    format(S, "episode_summary(~q).~n", [Summary]),
+    format(S, "episode_trajectory(~q).~n", [Trajectory]),
+    close(S),
+    
+    log(task="Stored episode: ~w", [EpisodeId]).
+
+% Search memory using RLM (the key insight - memory search IS an RLM task!)
+search_memory_with_rlm(Domain, Task, Hints) :-
+    memory_dir(Domain, MemDir),
+    
+    % Check if memory exists
+    format(string(CheckCmd), "ls ~w/*.pl 2>/dev/null | wc -l", [MemDir]),
+    vm_run(CheckCmd, CountStr),
+    string_codes(CountStr, Codes),
+    include(is_digit_code, Codes, DigitCodes),
+    string_codes(CleanStr, DigitCodes),
+    (CleanStr \= "", atom_string(CountAtom, CleanStr), atom_number(CountAtom, Count), Count > 0 ->
+        % Memory exists - use RLM to search it!
+        log(task="Searching ~w episodes in memory...", [Count]),
+        
+        format(string(SearchTask), 
+            "Search the episodic memory for experiences relevant to this task: ~w\n\nFind past episodes that might provide useful hints, strategies, or warnings. Focus on similar tasks, what worked, and what failed.",
+            [Task]),
+        
+        % Use memory_context/2 term instead of dict to avoid accessor issues
+        Context = memory_context(MemDir, "Searching episodic memory for relevant past experiences"),
+        
+        % Run memory search RLM (quick, 5 iterations max)
+        rlm_loop(memory_search, SearchTask, Context, [], 1, 5, _, _, Hints)
+    ;
+        % No memory yet
+        Hints = "No prior experience. This is the first task in this domain."
+    ).
+
+%% =============================================================
+%% MAIN ENTRY POINT
+%% =============================================================
+
+% Run RLM with episodic memory
+rlm_run(Domain, Task, WorkingDir, Result) :-
+    log(task="=== RLM Framework v2 ==="),
+    log(task="Domain: ~w", [Domain]),
+    log(task="Task: ~w", [Task]),
+    
+    domain_config(Domain, Config),
+    get_dict(max_iterations, Config, MaxIter),
+    
+    % Build context
+    format(string(Cmd), "ls -la ~w 2>/dev/null", [WorkingDir]),
+    vm_run(Cmd, Listing),
+    format(string(Info), "Working directory: ~w\n~w", [WorkingDir, Listing]),
+    Context = context{directory: WorkingDir, info: Info},
+    
+    % Search memory for hints (using RLM!)
+    search_memory_with_rlm(Domain, Task, MemoryHints),
+    log(task="Memory hints: ~w", [MemoryHints]),
+    
+    % Run main RLM loop with memory hints
+    get_time(StartTime),
+    rlm_loop_with_memory(Domain, Task, Context, MemoryHints, [], 1, MaxIter, Outcome, FinalHistory, Result),
+    get_time(EndTime),
+    
+    Duration is EndTime - StartTime,
+    log(task="Completed in ~2f seconds with outcome: ~w", [Duration, Outcome]),
+    
+    % Store this episode for future reference
+    store_episode(Domain, Task, FinalHistory, Result, Outcome).
+
+% Simple run without memory (for memory_search domain itself, to avoid recursion)
+rlm_run_simple(Domain, Task, WorkingDir, Result) :-
+    domain_config(Domain, Config),
+    get_dict(max_iterations, Config, MaxIter),
+    
+    format(string(Info), "Working directory: ~w", [WorkingDir]),
+    Context = context{directory: WorkingDir, info: Info},
+    
+    rlm_loop(Domain, Task, Context, [], 1, MaxIter, _, _, Result).
+
+%% =============================================================
+%% AGENT ENTRY POINTS
+%% =============================================================
+
+% Code Q&A
+agent_main :-
+    param("directory", "Code directory path", Directory),
+    param("question", "Question about the code", Question),
+    Directory \= "", Question \= "",
+    
+    format(string(Task), "Answer: ~w", [Question]),
+    rlm_run(code_qa, Task, Directory, Answer),
+    
+    end_thinking,
+    observation("---> Final answer: {Answer}"),
+    chat("Present the answer clearly based on the observations.").
+
+% Data Analysis
+agent_main :-
+    param("data_dir", "Data directory", DataDir),
+    param("analysis", "Analysis to perform", Analysis),
+    DataDir \= "", Analysis \= "",
+    
+    rlm_run(data_analysis, Analysis, DataDir, Result),
+    
+    end_thinking,
+    observation("Analysis: {Analysis}"),
+    observation("Result: {Result}"),
+    chat("Present the results.").
+
+% View memory
+agent_main :-
+    param("view_memory", "Domain to view memory for", Domain),
+    Domain \= "",
+    
+    memory_dir(Domain, MemDir),
+    format(string(Cmd), "echo '=== Episodes ===' && ls -la ~w/*.pl 2>/dev/null && echo '' && echo '=== Recent summaries ===' && tail -n 5 ~w/*.pl 2>/dev/null | grep episode_summary", [MemDir, MemDir]),
+    vm_run(Cmd, Report),
+    
+    end_thinking,
+    format(string(Msg), "## Memory for ~w\n\n```\n~w\n```", [Domain, Report]),
+    answer(Msg).
+
+% Clear memory
+agent_main :-
+    param("clear_memory", "Domain to clear", Domain),
+    Domain \= "",
+    
+    memory_dir(Domain, MemDir),
+    format(string(Cmd), "rm -rf '~w' && echo 'Cleared'", [MemDir]),
+    vm_run(Cmd, _),
+    
+    end_thinking,
+    format(string(Msg), "Memory cleared for ~w", [Domain]),
+    answer(Msg).
+
+% Fallback
+agent_main :-
+    end_thinking,
+    answer("## RLM Framework v2\n\n**Modes:**\n- Code Q&A: `directory` + `question`\n- Data Analysis: `data_dir` + `analysis`\n- View Memory: `view_memory` = domain\n- Clear Memory: `clear_memory` = domain\n\nMemory search uses RLM itself!").
