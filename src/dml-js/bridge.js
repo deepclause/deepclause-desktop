@@ -1492,7 +1492,7 @@ export async function* agentLoop(prompt, resultTerm, options, session, abortSign
             Object.assign(filteredTools, aiToolsBase);
         }
 
-
+        let responseText = '';
         let finalAnswer = ""
         filteredTools["final_answer"] =  aiTool({
             description: "Provide the final answer to the user's request. Use this when you have completed the task and want to deliver your final response. This will end the agent's execution.",
@@ -1501,7 +1501,8 @@ export async function* agentLoop(prompt, resultTerm, options, session, abortSign
             }),
             execute: async ({ message }) => {
                 finalAnswer = message;
-                return "";
+                responseText += message
+                return "\n\n"+message;
             }
         });
         
@@ -1546,7 +1547,7 @@ If you cannot complete the task with the available tools, do not guess. Return a
         let currentMessages = Array.isArray(messages) ? [...messages] : [];
         currentMessages.push({ role: "user", content: String(prompt ?? '') });
         
-        let responseText = '';
+        
 
         const agentConfig = getAgentConfig();
         // Start streamText for this step
@@ -1602,6 +1603,8 @@ If you cannot complete the task with the available tools, do not guess. Return a
             yield `<log>${msg}</log>\n`;
         }
         
+        debugLog('Agent loop completed with response:', responseText);
+
         yield { result_term: responseText, output: responseText,success: true };
 
     } catch (error) {
@@ -1889,6 +1892,9 @@ Remember:
 
         const userPrompt = `Text:\n\`\`\`\n${textWithBoundVars}\n\`\`\`\n\nGoal: ${outputTemplate}\nExplanation: ${ruleExplanation === "na" ? goalInContext : ruleExplanation}`;
 
+        debugLog('Goal eval system prompt:', systemPrompt);
+        debugLog('Goal eval user prompt:', userPrompt);
+        
         let allTerms = [];
         let reasoning = "";
         const errors = [];
@@ -2764,6 +2770,19 @@ function createBadge(text, color = ANSI.cyan) {
 export { endSingleLineMode, flushStreamBuffer };
 
 /**
+ * Verbose mode flag - when false, filters out "Executing goal:" messages
+ */
+let verboseMode = false;
+
+export function setVerbose(value) {
+    verboseMode = !!value;
+}
+
+export function isVerbose() {
+    return verboseMode;
+}
+
+/**
  * Rich console printing with TUI-style formatting
  */
 export function richPrint(text) {
@@ -2792,6 +2811,15 @@ export function richPrint(text) {
                 endSingleLineMode();
                 const toolName = logText.replace('Calling tool:', '').trim();
                 process.stdout.write(`\n${ANSI.cyan}${ANSI.bold}🔧 TOOL${ANSI.reset} ${ANSI.dim}│${ANSI.reset} ${ANSI.brightCyan}${toolName}${ANSI.reset}\n`);
+            } else if (logText.startsWith('Executing goal:')) {
+                // Only show "Executing goal:" messages in verbose mode
+                if (verboseMode) {
+                    if (isInDmlExecution) {
+                        writeSingleLineStatus(logText, '▸');
+                    } else {
+                        process.stdout.write(`${ANSI.brightBlack}▸${ANSI.reset} ${ANSI.dim}${logText}${ANSI.reset}\n`);
+                    }
+                }
             } else {
                 // Use single-line mode for regular log messages during DML execution
                 if (isInDmlExecution) {
@@ -3430,9 +3458,9 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
                                     yield part; // Stream instruction text directly
 
-                                } else if (part && typeof part === 'object' && part.all_output !== undefined) {
+                                } /*else if (part && typeof part === 'object' && part.all_output !== undefined) {
                                     instrOutput += `\nInstruction output: ${part.all_output}\n`;
-                                }
+                                }*/
                             }
 
                             writeLog(`instruction output length=${instrOutput.length}`);

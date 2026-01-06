@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { globSync } from 'glob';
 
-import { richPrint, endSingleLineMode, flushStreamBuffer, init as initBridge, shutdownMcpClients, getGlobalTools } from './dml-js/bridge.js';
+import { richPrint, endSingleLineMode, flushStreamBuffer, init as initBridge, shutdownMcpClients, getGlobalTools, setVerbose } from './dml-js/bridge.js';
 import { DMLAgent } from './electron/main/dml-agent.js';
 import { analyzeDmlParameters } from './dml-js/dml-utils.js';
 
@@ -493,7 +493,15 @@ ${C.bold}${C.cyan}━━━━━━━━━━━━━━━━━━━━�
 
     saveDml(filename) {
         try {
-            const result = this.agent.saveDml(filename);
+            let result;
+            // CLI-only: Check if filename looks like a path (contains / or \, or is absolute)
+            if (filename.includes('/') || filename.includes('\\') || path.isAbsolute(filename)) {
+                // Save to arbitrary path
+                result = this.agent.saveDmlToPath(filename);
+            } else {
+                // Save to standard examples directory
+                result = this.agent.saveDml(filename);
+            }
             printSuccess(result);
         } catch (error) {
             printError(error.message);
@@ -511,7 +519,18 @@ ${C.bold}${C.cyan}━━━━━━━━━━━━━━━━━━━━�
             
             isDmlExecuting = true;
             this.currentAbortController = new AbortController();
-            await this.agent.runDmlFile(filename, parameters, null);
+            
+            // CLI-only: Check if filename is a direct path to an existing file
+            // (absolute path or relative path that exists)
+            const resolvedPath = path.isAbsolute(filename) ? filename : path.resolve(filename);
+            if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+                // Read file directly and run its content
+                const content = fs.readFileSync(resolvedPath, 'utf-8');
+                await this.agent.runDmlContent(content, parameters);
+            } else {
+                // Fall back to searching in standard directories
+                await this.agent.runDmlFile(filename, parameters, null);
+            }
             
             flushStreamBuffer(); // Flush any remaining buffered text
             endSingleLineMode(); // Ensure we're on a new line after streaming
@@ -546,6 +565,12 @@ ${C.bold}${C.cyan}━━━━━━━━━━━━━━━━━━━━�
      * @returns {string|null} - The file content or null if not found
      */
     readDmlFileContent(filename) {
+        // CLI-only: First check if filename is a direct path to an existing file
+        const resolvedPath = path.isAbsolute(filename) ? filename : path.resolve(filename);
+        if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+            return fs.readFileSync(resolvedPath, 'utf-8');
+        }
+        
         // Support both dot notation (browser.find_trials) and direct paths
         let fname = filename;
         if (!fname.endsWith('.dml')) {
@@ -947,6 +972,8 @@ function parseArgs() {
             }
         } else if (arg === '-h' || arg === '--help') {
             result.help = true;
+        } else if (arg === '-v' || arg === '--verbose') {
+            result.verbose = true;
         }
     }
     
@@ -971,18 +998,21 @@ ${C.yellow}${C.bold}Usage:${C.reset}
 ${C.yellow}${C.bold}Options:${C.reset}
   ${C.cyan}-p, --prompt${C.reset}  ${C.dim}<prompt>${C.reset}    Any prompt including / commands
   ${C.cyan}-c, --create${C.reset}  ${C.dim}<prompt>${C.reset}    Run /create <prompt>, use with -o to save
-  ${C.cyan}-r, --run${C.reset}     ${C.dim}<file>${C.reset}      Run /run <filename>
+  ${C.cyan}-r, --run${C.reset}     ${C.dim}<file>${C.reset}      Run a DML file (name or path)
   ${C.cyan}-l, --list${C.reset}               List all DML files with parameters
   ${C.cyan}-i, --input${C.reset}   ${C.dim}<json>${C.reset}      Input parameters as JSON for -r or -p "/run ..."
-  ${C.cyan}-o, --output${C.reset}  ${C.dim}<name>${C.reset}      Output filename for -c (auto-saves DML)
+  ${C.cyan}-o, --output${C.reset}  ${C.dim}<file>${C.reset}      Output file for -c (name or path)
+  ${C.cyan}-v, --verbose${C.reset}            Show detailed execution logs
   ${C.cyan}-x, --execute${C.reset} ${C.dim}<prompt>${C.reset}    Legacy: same as -p
   ${C.cyan}-h, --help${C.reset}                 Show this help
 
 ${C.yellow}${C.bold}Examples:${C.reset}
   ${C.cyan}deepclause -l${C.reset}                                   ${C.dim}List all DML files${C.reset}
   ${C.cyan}deepclause -r myagent.dml${C.reset}                       ${C.dim}Run a DML file${C.reset}
+  ${C.cyan}deepclause -r ./path/to/agent.dml${C.reset}               ${C.dim}Run a DML file by path${C.reset}
   ${C.cyan}deepclause -r search.dml -i '{"query":"AI news"}'${C.reset} ${C.dim}Run with parameters${C.reset}
   ${C.cyan}deepclause -c "a web search agent" -o websearch${C.reset} ${C.dim}Create and save DML${C.reset}
+  ${C.cyan}deepclause -c "a web search agent" -o ./agents/search.dml${C.reset} ${C.dim}Save to path${C.reset}
   ${C.cyan}deepclause -p "Search for Python tutorials"${C.reset}     ${C.dim}Natural language${C.reset}
 
 ${C.yellow}${C.bold}Interactive Commands:${C.reset}
@@ -1009,6 +1039,11 @@ async function main() {
     if (args.help) {
         printUsage();
         process.exit(0);
+    }
+    
+    // Set verbose mode if -v flag is provided
+    if (args.verbose) {
+        setVerbose(true);
     }
     
     try {

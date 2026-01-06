@@ -1,0 +1,963 @@
+% rlm_coding_agent.dml - Meta-Interpreter RLM Coding Agent
+% 
+% A coding agent that can understand, plan, and edit code.
+% Based on rlm_framework_v3 meta-interpreter design.
+%
+% Key design:
+% - RLM as Prolog meta-interpreter
+% - State includes plan for tracking implementation steps
+% - Three phases: Understand -> Plan -> Execute
+% - edit_file action generates diffs via recursive LLM
+% - Checkpoint-based backtracking for safe edits
+
+%% =============================================================
+%% STATE MANAGEMENT
+%% =============================================================
+
+% Initial state for a coding task
+initial_state(Task, WorkingDir, State) :-
+    State = [
+        task(Task),
+        directory(WorkingDir),
+        step(1),
+        max_iter(20),
+        phase(understand),  % understand -> plan -> execute
+        plan([]),           % List of planned changes
+        edits([]),          % List of completed edits
+        history([]),
+        observations([]),
+        failures([]),
+        checkpoints([])
+    ].
+
+% Get a value from state
+get_state(Key, State, Value) :-
+    member(Term, State),
+    Term =.. [Key, Value], !.
+get_state(_, _, undefined).
+
+% Update state (functional - returns new state)
+set_state(Key, Value, State, NewState) :-
+    NewTerm =.. [Key, Value],
+    (select(OldTerm, State, Rest), OldTerm =.. [Key, _] ->
+        NewState = [NewTerm|Rest]
+    ;
+        NewState = [NewTerm|State]
+    ).
+
+% Update multiple state values
+set_states([], State, State).
+set_states([Key-Value|Rest], State, FinalState) :-
+    set_state(Key, Value, State, State1),
+    set_states(Rest, State1, FinalState).
+
+% Increment step counter
+inc_step(State, NewState) :-
+    get_state(step, State, N),
+    N1 is N + 1,
+    set_state(step, N1, State, NewState).
+
+% Add to history
+add_history(Action, Observation, State, NewState) :-
+    get_state(history, State, History),
+    get_state(step, State, Step),
+    append(History, [entry(Step, Action, Observation)], NewHistory),
+    set_state(history, NewHistory, State, NewState).
+
+% Add to observations (indexed for reference)
+add_observation(Obs, State, NewState) :-
+    get_state(observations, State, Observations),
+    get_state(step, State, Step),
+    append(Observations, [obs(Step, Obs)], NewObservations),
+    set_state(observations, NewObservations, State, NewState).
+
+% Record a failure
+add_failure(Clause, Reason, State, NewState) :-
+    get_state(failures, State, Failures),
+    get_state(step, State, Step),
+    append(Failures, [failure(Step, Clause, Reason)], NewFailures),
+    set_state(failures, NewFailures, State, NewState).
+
+%% =============================================================
+%% CHECKPOINT SYSTEM (for backtracking)
+%% =============================================================
+
+% Save a checkpoint
+save_checkpoint(Name, State, NewState) :-
+    get_state(checkpoints, State, Checkpoints),
+    % Store the full state at this point
+    append(Checkpoints, [checkpoint(Name, State)], NewCheckpoints),
+    set_state(checkpoints, NewCheckpoints, State, NewState).
+
+% Restore a checkpoint (returns the old state, but keeps failure info)
+restore_checkpoint(Name, CurrentState, RestoredState) :-
+    get_state(checkpoints, CurrentState, Checkpoints),
+    member(checkpoint(Name, OldState), Checkpoints),
+    % Keep current failures but restore rest
+    get_state(failures, CurrentState, CurrentFailures),
+    set_state(failures, CurrentFailures, OldState, RestoredState).
+
+%% =============================================================
+%% META-INTERPRETER CORE
+%% =============================================================
+
+% Main entry: solve a goal given initial state, returns Result and FinalState
+rlm_solve(Goal, State, Result, FinalState) :-
+    get_state(step, State, Step),
+    get_state(max_iter, State, MaxIter),
+    (Step > MaxIter ->
+        Result = timeout("Max iterations reached"),
+        FinalState = State,
+        log(task="RLM timeout after ~w steps", [Step])
+    ;
+        log(task="RLM Step ~w: solving ~w", [Step, Goal]),
+        solve_step(Goal, State, Result, FinalState)
+    ).
+
+% Base case: finished
+solve_step(finished(Answer), State, success(Answer), State) :- !.
+
+% Try to solve by getting LLM to generate a clause
+solve_step(Goal, State, Result, FinalState) :-
+    % Format state for LLM
+    format_state_for_llm(State, StateDesc),
+    
+    % LLM generates a clause (list of subgoals)
+    llm_generate_clause(Goal, StateDesc, Clause),
+    log(task="LLM generated clause: ~w", [Clause]),
+    
+    % Try to execute the clause
+    (execute_clause(Clause, State, NewState, ClauseResult) ->
+        handle_clause_result(Goal, ClauseResult, NewState, Result, FinalState)
+    ;
+        % Clause execution failed entirely
+        add_failure(Clause, "Execution failed", State, FailState),
+        inc_step(FailState, RetryState),
+        rlm_solve(Goal, RetryState, Result, FinalState)
+    ).
+
+% Handle the result of executing a clause
+handle_clause_result(_, finished(Answer), State, success(Answer), State) :- !,
+    log(task="RLM finished with: ~w", [Answer]).
+
+handle_clause_result(Goal, continue, State, Result, FinalState) :- !,
+    inc_step(State, NewState),
+    rlm_solve(Goal, NewState, Result, FinalState).
+
+handle_clause_result(Goal, retry(Reason), State, Result, FinalState) :- !,
+    log(task="Retrying due to: ~w", [Reason]),
+    inc_step(State, NewState),
+    rlm_solve(Goal, NewState, Result, FinalState).
+
+handle_clause_result(Goal, backtrack(CheckpointName), State, Result, FinalState) :- !,
+    log(task="Backtracking to checkpoint: ~w", [CheckpointName]),
+    restore_checkpoint(CheckpointName, State, RestoredState),
+    inc_step(RestoredState, NewState),
+    rlm_solve(Goal, NewState, Result, FinalState).
+
+%% =============================================================
+%% CLAUSE EXECUTION ENGINE
+%% =============================================================
+
+% Execute a clause (list of goals)
+% Returns: NewState and ClauseResult (finished/continue/retry/backtrack)
+execute_clause([], State, State, continue) :- !.
+
+execute_clause([Goal|Rest], State, FinalState, Result) :-
+    execute_goal(Goal, State, State1, GoalResult),
+    (GoalResult = continue ->
+        execute_clause(Rest, State1, FinalState, Result)
+    ;
+        % Goal produced a terminal result
+        FinalState = State1,
+        Result = GoalResult
+    ).
+
+% Execute a single goal
+% Built-in Prolog goals (arithmetic, comparison, etc.)
+execute_goal(Goal, State, State, continue) :-
+    is_builtin(Goal), !,
+    (call(Goal) -> true ; fail).
+
+% Finish action
+execute_goal(finish(Answer), State, State, finished(Answer)) :- !.
+
+% Checkpoint actions
+execute_goal(checkpoint(Name), State, NewState, continue) :- !,
+    save_checkpoint(Name, State, NewState),
+    log(task="Saved checkpoint: ~w", [Name]).
+
+execute_goal(backtrack_to(Name), State, State, backtrack(Name)) :- !.
+
+% Retry action (explicit retry request)
+execute_goal(retry(Reason), State, State, retry(Reason)) :- !.
+
+% Planning actions (modify state directly)
+execute_goal(create_plan(PlanItems), State, NewState, continue) :- !,
+    set_state(plan, PlanItems, State, State1),
+    set_state(phase, execute, State1, State2),
+    length(PlanItems, N),
+    format_plan(PlanItems, 1, PlanStr),
+    format(string(Obs), "=== Plan Created (~w items) ===\n~w\n\nPhase changed to: execute", [N, PlanStr]),
+    add_history(create_plan(PlanItems), Obs, State2, State3),
+    add_observation(Obs, State3, NewState).
+
+execute_goal(update_phase(NewPhase), State, NewState, continue) :- !,
+    set_state(phase, NewPhase, State, State1),
+    format(string(Obs), "=== Phase updated to: ~w ===", [NewPhase]),
+    add_history(update_phase(NewPhase), Obs, State1, State2),
+    add_observation(Obs, State2, NewState).
+
+% Edit actions (track completed edits)
+execute_goal(edit_file(FilePath, EditPlan), State, NewState, continue) :- !,
+    execute_rlm_action(edit_file(FilePath, EditPlan), State, Observation),
+    % Track edit if successful
+    (sub_string(Observation, _, _, _, "updated successfully") ->
+        get_state(edits, State, Edits),
+        append(Edits, [edit(FilePath, edited)], NewEdits),
+        set_state(edits, NewEdits, State, State1)
+    ;
+        State1 = State
+    ),
+    add_history(edit_file(FilePath, EditPlan), Observation, State1, State2),
+    add_observation(Observation, State2, NewState).
+
+execute_goal(create_file(FilePath, Description), State, NewState, continue) :- !,
+    execute_rlm_action(create_file(FilePath, Description), State, Observation),
+    % Track creation if successful
+    (sub_string(Observation, _, _, _, "Created:") ->
+        get_state(edits, State, Edits),
+        append(Edits, [edit(FilePath, created)], NewEdits),
+        set_state(edits, NewEdits, State, State1)
+    ;
+        State1 = State
+    ),
+    add_history(create_file(FilePath, Description), Observation, State1, State2),
+    add_observation(Observation, State2, NewState).
+
+% RLM actions (list_files, read_file, etc.)
+execute_goal(Action, State, NewState, continue) :-
+    is_rlm_action(Action), !,
+    execute_rlm_action(Action, State, Observation),
+    add_history(Action, Observation, State, State1),
+    add_observation(Observation, State1, NewState).
+
+% Unknown goal - fail
+execute_goal(Goal, State, State, retry(unknown_goal(Goal))) :-
+    log(error="Unknown goal: ~w", [Goal]).
+
+% Check if goal is a Prolog builtin
+% Arithmetic comparisons
+is_builtin(X > Y) :- number(X), number(Y).
+is_builtin(X < Y) :- number(X), number(Y).
+is_builtin(X >= Y) :- number(X), number(Y).
+is_builtin(X =< Y) :- number(X), number(Y).
+is_builtin(_ is _).
+
+% Equality/unification
+is_builtin(X == Y).
+is_builtin(X \== Y).
+is_builtin(X = Y).
+is_builtin(X \= Y).
+
+% Control flow
+is_builtin((_ ; _)).      % Disjunction (or)
+is_builtin((_ -> _ ; _)). % If-then-else
+is_builtin((_ -> _)).     % If-then
+is_builtin(\+ _).         % Negation as failure
+is_builtin(not(_)).
+is_builtin(!).
+
+% List operations
+is_builtin(member(_, _)).
+is_builtin(append(_, _, _)).
+is_builtin(length(_, _)).
+is_builtin(nth0(_, _, _)).
+is_builtin(nth1(_, _, _)).
+is_builtin(last(_, _)).
+is_builtin(reverse(_, _)).
+is_builtin(sort(_, _)).
+is_builtin(msort(_, _)).
+is_builtin(findall(_, _, _)).
+
+% Type checks
+is_builtin(atom(_)).
+is_builtin(number(_)).
+is_builtin(integer(_)).
+is_builtin(float(_)).
+is_builtin(is_list(_)).
+is_builtin(string(_)).
+is_builtin(var(_)).
+is_builtin(nonvar(_)).
+is_builtin(ground(_)).
+is_builtin(compound(_)).
+
+% String operations
+is_builtin(atom_string(_, _)).
+is_builtin(atom_codes(_, _)).
+is_builtin(atom_chars(_, _)).
+is_builtin(atom_concat(_, _, _)).
+is_builtin(string_codes(_, _)).
+is_builtin(string_chars(_, _)).
+is_builtin(string_concat(_, _, _)).
+is_builtin(sub_string(_, _, _, _, _)).
+is_builtin(string_length(_, _)).
+is_builtin(upcase_atom(_, _)).
+is_builtin(downcase_atom(_, _)).
+is_builtin(format(_, _, _)).
+is_builtin(format(_, _)).
+
+% Term manipulation
+is_builtin(functor(_, _, _)).
+is_builtin(arg(_, _, _)).
+is_builtin(_ =.. _).
+is_builtin(copy_term(_, _)).
+
+% Control
+is_builtin(true).
+is_builtin(fail).
+is_builtin(false).
+
+% Check if goal is an RLM action
+% === Exploration Actions ===
+is_rlm_action(list_files(_)).
+is_rlm_action(read_file(_)).
+is_rlm_action(search_pattern(_)).
+is_rlm_action(analyze_structure).
+is_rlm_action(analyze_chunk(_, _)).
+is_rlm_action(analyze_observations(_, _)).
+
+% === Planning Actions ===
+is_rlm_action(create_plan(_)).
+is_rlm_action(update_phase(_)).
+
+% === Editing Actions ===
+is_rlm_action(edit_file(_, _)).
+is_rlm_action(create_file(_, _)).
+
+% === Utility Actions ===
+is_rlm_action(run_python(_)).
+is_rlm_action(generate_and_run_python(_)).
+is_rlm_action(shell(_)).
+
+%% =============================================================
+%% RLM ACTION EXECUTION
+%% =============================================================
+
+execute_rlm_action(list_files(Path), State, Obs) :-
+    get_state(directory, State, Dir),
+    format(string(Cmd), "find ~w/~w -maxdepth 2 -type f 2>/dev/null | grep -v node_modules | grep -v __pycache__ | grep -v '.git' | head -100", [Dir, Path]),
+    vm_run(Cmd, Result),
+    (Result \= "" -> 
+        format(string(Obs), "=== Files in '~w' ===\n~w", [Path, Result])
+    ; 
+        format(string(Obs), "=== Files in '~w' ===\nNo files found.", [Path])
+    ).
+
+execute_rlm_action(read_file(FilePath), State, Obs) :-
+    get_state(directory, State, Dir),
+    format(string(FullPath), "~w/~w", [Dir, FilePath]),
+    format(string(CheckCmd), "test -f '~w' && echo exists", [FullPath]),
+    vm_run(CheckCmd, CheckResult),
+    (sub_string(CheckResult, _, _, _, "exists") ->
+        % File exists, read it
+        format(string(Cmd), "head -c 50000 '~w' 2>/dev/null", [FullPath]),
+        vm_run(Cmd, Content),
+        (Content \= "" -> 
+            format(string(Obs), "=== Contents of '~w' ===\n~w", [FilePath, Content])
+        ; 
+            format(string(Obs), "=== Contents of '~w' ===\n(empty file)", [FilePath])
+        )
+    ;
+        format(string(Obs), "=== Error ===\nFile '~w' not found.", [FilePath])
+    ).
+
+execute_rlm_action(search_pattern(Pattern), State, Obs) :-
+    get_state(directory, State, Dir),
+    format(string(Cmd), "grep -rn --include='*.py' --include='*.js' --include='*.ts' --include='*.pl' --include='*.dml' --include='*.md' --include='*.json' '~w' ~w 2>/dev/null | head -50", [Pattern, Dir]),
+    vm_run(Cmd, Result),
+    (Result \= "" -> 
+        format(string(Obs), "=== Search results for '~w' ===\n~w", [Pattern, Result])
+    ; 
+        format(string(Obs), "=== Search results for '~w' ===\nNo matches found.", [Pattern])
+    ).
+
+execute_rlm_action(analyze_structure, State, Obs) :-
+    get_state(directory, State, Dir),
+    format(string(Cmd), "find ~w -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.pl' -o -name '*.dml' \\) 2>/dev/null | grep -v node_modules | head -100", [Dir]),
+    vm_run(Cmd, Result),
+    (Result \= "" ->
+        format(string(Obs), "=== Codebase Structure ===\n~w", [Result])
+    ;
+        Obs = "=== Codebase Structure ===\nNo code files found."
+    ).
+
+execute_rlm_action(analyze_chunk(Content, Question), _, Obs) :-
+    analyze_chunk_llm(Content, Question, Analysis),
+    format(string(Obs), "=== Analysis ===\nQ: ~w\n\n~w", [Question, Analysis]).
+
+execute_rlm_action(analyze_observations(ObsIds, Question), State, Obs) :-
+    get_state(observations, State, Observations),
+    collect_obs_by_ids(Observations, ObsIds, Collected),
+    (Collected \= "" ->
+        analyze_chunk_llm(Collected, Question, Analysis),
+        format(string(Obs), "=== Analysis of Obs ~w ===\nQ: ~w\n\n~w", [ObsIds, Question, Analysis])
+    ;
+        format(string(Obs), "=== Error ===\nNo observations found for IDs: ~w", [ObsIds])
+    ).
+
+execute_rlm_action(run_python(Code), _, Obs) :-
+    open("_temp.py", write, S), write(S, Code), close(S),
+    vm_run("python3 _temp.py 2>&1", Result),
+    format(string(Obs), "=== Python Output ===\n~w", [Result]).
+
+execute_rlm_action(generate_and_run_python(Task), State, Obs) :-
+    get_state(directory, State, Dir),
+    get_state(observations, State, Observations),
+    (Observations \= [] -> 
+        last(Observations, obs(_, LastObs)),
+        format(string(Ctx), "Dir: ~w\nLast observation:\n~w", [Dir, LastObs])
+    ;
+        format(string(Ctx), "Dir: ~w", [Dir])
+    ),
+    generate_python_code(Task, Ctx, Code),
+    open("_temp.py", write, S), write(S, Code), close(S),
+    vm_run("python3 _temp.py 2>&1", Result),
+    format(string(Obs), "=== Generated Python for: ~w ===\nCode:\n~w\n\nOutput:\n~w", [Task, Code, Result]).
+
+execute_rlm_action(shell(Cmd), _, Obs) :-
+    vm_run(Cmd, Result),
+    format(string(Obs), "=== Shell: ~w ===\n~w", [Cmd, Result]).
+
+% === Editing Actions ===
+
+% edit_file(FilePath, EditPlan) - Edit existing file based on plan
+execute_rlm_action(edit_file(FilePath, EditPlan), State, Obs) :-
+    get_state(directory, State, Dir),
+    format(string(FullPath), "~w/~w", [Dir, FilePath]),
+    format(string(ReadCmd), "cat '~w' 2>/dev/null", [FullPath]),
+    vm_run(ReadCmd, OriginalContent),
+    (OriginalContent \= "" ->
+        % File exists, generate edit
+        get_recent_context(State, Context),
+        llm_generate_edit(FilePath, OriginalContent, EditPlan, Context, NewContent),
+        generate_diff(OriginalContent, NewContent, Diff),
+        open(FullPath, write, Stream),
+        write(Stream, NewContent),
+        close(Stream),
+        format(string(Obs), "=== Edit: ~w ===\nPlan: ~w\n\n~w\n\nFile updated successfully.", [FilePath, EditPlan, Diff])
+    ;
+        % File doesn't exist
+        format(string(Obs), "=== Error ===\nFile '~w' not found. Use create_file for new files.", [FilePath])
+    ).
+
+% create_file(FilePath, Description) - Create new file with generated content
+execute_rlm_action(create_file(FilePath, Description), State, Obs) :-
+    get_state(directory, State, Dir),
+    format(string(FullPath), "~w/~w", [Dir, FilePath]),
+    format(string(CheckCmd), "test -f '~w' && echo exists", [FullPath]),
+    vm_run(CheckCmd, CheckResult),
+    (sub_string(CheckResult, _, _, _, "exists") ->
+        format(string(Obs), "=== Error ===\nFile '~w' already exists. Use edit_file to modify.", [FilePath])
+    ;
+        % File doesn't exist, create it
+        get_recent_context(State, Context),
+        llm_generate_new_file(FilePath, Description, Context, Content),
+        % Ensure directory exists
+        file_directory(FilePath, FileDir),
+        (FileDir \= "" -> 
+            format(string(MkdirCmd), "mkdir -p '~w/~w'", [Dir, FileDir]),
+            vm_run(MkdirCmd, _)
+        ; true),
+        open(FullPath, write, Stream),
+        write(Stream, Content),
+        close(Stream),
+        count_lines(Content, LineCount),
+        format(string(Obs), "=== Created: ~w ===\nDescription: ~w\nLines: ~w\n\n--- New File Preview (first 50 lines) ---\n~w", 
+               [FilePath, Description, LineCount, Content])
+    ).
+
+% Helper to extract directory from file path (get everything before last /)
+file_directory(FilePath, Dir) :-
+    (find_last_slash(FilePath, 0, -1, LastPos), LastPos >= 0 ->
+        sub_string(FilePath, 0, LastPos, _, Dir)
+    ;
+        Dir = ""
+    ).
+
+% Find position of last slash in string
+find_last_slash(Str, Pos, LastFound, Result) :-
+    string_length(Str, Len),
+    (Pos >= Len ->
+        Result = LastFound
+    ;
+        sub_string(Str, Pos, 1, _, Char),
+        (Char = "/" -> NewLast = Pos ; NewLast = LastFound),
+        Pos1 is Pos + 1,
+        find_last_slash(Str, Pos1, NewLast, Result)
+    ).
+
+% Helper to collect observations by IDs
+collect_obs_by_ids([], _, "").
+collect_obs_by_ids([obs(Id, Content)|Rest], Ids, Collected) :-
+    (member(Id, Ids) ->
+        format(string(This), "--- Obs #~w ---\n~w\n\n", [Id, Content]),
+        collect_obs_by_ids(Rest, Ids, RestCollected),
+        atom_concat(This, RestCollected, Collected)
+    ;
+        collect_obs_by_ids(Rest, Ids, Collected)
+    ).
+
+% Helper to format plan items
+format_plan([], _, "").
+format_plan([Item|Rest], N, Result) :-
+    format(string(Line), "~w. ~w\n", [N, Item]),
+    N1 is N + 1,
+    format_plan(Rest, N1, RestStr),
+    atom_concat(Line, RestStr, Result).
+
+% Helper to get recent context from observations
+get_recent_context(State, Context) :-
+    get_state(observations, State, Obs),
+    get_state(task, State, Task),
+    get_state(plan, State, Plan),
+    (length(Obs, Len), Len > 3 ->
+        % Get last 3 observations
+        reverse(Obs, RevObs),
+        take_n(RevObs, 3, Recent),
+        reverse(Recent, RecentObs)
+    ;
+        RecentObs = Obs
+    ),
+    format_observations(RecentObs, ObsStr),
+    format_plan(Plan, 1, PlanStr),
+    format(string(Context), "Task: ~w\n\nPlan:\n~w\nRecent observations:\n~w", [Task, PlanStr, ObsStr]).
+
+take_n(_, 0, []) :- !.
+take_n([], _, []).
+take_n([H|T], N, [H|R]) :- N > 0, N1 is N - 1, take_n(T, N1, R).
+
+format_observations([], "").
+format_observations([obs(Id, Content)|Rest], Result) :-
+    % Truncate long observations
+    string_length(Content, Len),
+    (Len > 1000 ->
+        sub_string(Content, 0, 1000, _, Truncated),
+        format(string(This), "--- Obs #~w (truncated) ---\n~w...\n\n", [Id, Truncated])
+    ;
+        format(string(This), "--- Obs #~w ---\n~w\n\n", [Id, Content])
+    ),
+    format_observations(Rest, RestStr),
+    atom_concat(This, RestStr, Result).
+
+% Generate diff between original and new content
+generate_diff(Original, New, Diff) :-
+    % Simple line-by-line diff
+    split_string(Original, "\n", "", OrigLines),
+    split_string(New, "\n", "", NewLines),
+    generate_diff_lines(OrigLines, NewLines, 1, DiffLines),
+    (DiffLines \= "" ->
+        format(string(Diff), "--- Diff ---\n~w", [DiffLines])
+    ;
+        Diff = "--- Diff ---\nNo changes."
+    ).
+
+generate_diff_lines([], [], _, "").
+generate_diff_lines([], [N|NewRest], LineNum, Result) :-
+    format(string(Line), "+~w: ~w\n", [LineNum, N]),
+    L1 is LineNum + 1,
+    generate_diff_lines([], NewRest, L1, RestDiff),
+    atom_concat(Line, RestDiff, Result).
+generate_diff_lines([O|OrigRest], [], LineNum, Result) :-
+    format(string(Line), "-~w: ~w\n", [LineNum, O]),
+    L1 is LineNum + 1,
+    generate_diff_lines(OrigRest, [], L1, RestDiff),
+    atom_concat(Line, RestDiff, Result).
+generate_diff_lines([O|OrigRest], [N|NewRest], LineNum, Result) :-
+    L1 is LineNum + 1,
+    (O == N ->
+        generate_diff_lines(OrigRest, NewRest, L1, Result)
+    ;
+        format(string(Line), "-~w: ~w\n+~w: ~w\n", [LineNum, O, LineNum, N]),
+        generate_diff_lines(OrigRest, NewRest, L1, RestDiff),
+        atom_concat(Line, RestDiff, Result)
+    ).
+
+% Count lines in content
+count_lines(Content, Count) :-
+    split_string(Content, "\n", "", Lines),
+    length(Lines, Count).
+
+%% =============================================================
+%% VM HELPERS
+%% =============================================================
+
+vm_run(Cmd, Output) :-
+    tool(vm_exec(Cmd), RawResult),
+    parse_vm_output(RawResult, Output).
+
+parse_vm_output(RawOutput, Output) :-
+    (sub_string(RawOutput, Before, _, _, "Command output:\n") ->
+        string_length("Command output:\n", MarkerLen),
+        Start is Before + MarkerLen,
+        sub_string(RawOutput, Start, _, 0, Output)
+    ;
+        Output = RawOutput
+    ).
+
+%% =============================================================
+%% LLM INTEGRATION
+%% =============================================================
+
+% Format state for LLM consumption
+format_state_for_llm(State, Description) :-
+    get_state(task, State, Task),
+    get_state(directory, State, Dir),
+    get_state(step, State, Step),
+    get_state(max_iter, State, MaxIter),
+    get_state(phase, State, Phase),
+    get_state(plan, State, Plan),
+    get_state(edits, State, Edits),
+    get_state(history, State, History),
+    get_state(failures, State, Failures),
+    
+    format_history_for_llm(History, HistoryStr),
+    format_failures_for_llm(Failures, FailuresStr),
+    format_plan(Plan, 1, PlanStr),
+    format_edits(Edits, EditsStr),
+    
+    format(string(Description), 
+"Task: ~w
+Directory: ~w
+Step: ~w / ~w
+Phase: ~w
+
+=== Plan ===
+~w
+
+=== Completed Edits ===
+~w
+
+=== History ===
+~w
+
+=== Previous Failures (avoid these!) ===
+~w", [Task, Dir, Step, MaxIter, Phase, PlanStr, EditsStr, HistoryStr, FailuresStr]).
+
+format_history_for_llm([], "No actions taken yet.").
+format_history_for_llm(History, Str) :-
+    History \= [],
+    format_history_entries(History, Entries),
+    atomic_list_concat(Entries, "\n\n", Str).
+
+format_history_entries([], []).
+format_history_entries([entry(Id, Action, Obs)|Rest], [Entry|RestEntries]) :-
+    string_length(Obs, Len),
+    (Len > 1500 ->
+        sub_string(Obs, 0, 1500, _, Trunc),
+        format(string(Entry), "[Obs #~w] ~w\n~w...(truncated)", [Id, Action, Trunc])
+    ;
+        format(string(Entry), "[Obs #~w] ~w\n~w", [Id, Action, Obs])
+    ),
+    format_history_entries(Rest, RestEntries).
+
+format_failures_for_llm([], "None").
+format_failures_for_llm(Failures, Str) :-
+    Failures \= [],
+    format_failure_entries(Failures, Entries),
+    atomic_list_concat(Entries, "\n", Str).
+
+format_failure_entries([], []).
+format_failure_entries([failure(Step, Clause, Reason)|Rest], [Entry|RestEntries]) :-
+    format(string(Entry), "Step ~w: ~w failed - ~w", [Step, Clause, Reason]),
+    format_failure_entries(Rest, RestEntries).
+
+% Format completed edits
+format_edits([], "None yet").
+format_edits(Edits, Str) :-
+    Edits \= [],
+    format_edit_entries(Edits, Entries),
+    atomic_list_concat(Entries, "\n", Str).
+
+format_edit_entries([], []).
+format_edit_entries([edit(File, Action)|Rest], [Entry|RestEntries]) :-
+    format(string(Entry), "- ~w: ~w", [File, Action]),
+    format_edit_entries(Rest, RestEntries).
+
+% LLM generates a clause (list of goals to execute)
+llm_generate_clause(Goal, StateDesc, Clause) :-
+    clear_memory,
+    system("You are an RLM (Recursive Language Model) coding agent. You generate Prolog clauses to understand, plan, and modify code.
+
+## WORKFLOW PHASES
+
+**Phase 1: UNDERSTAND** - Explore the codebase before making changes
+**Phase 2: PLAN** - Create a plan of what to change
+**Phase 3: EXECUTE** - Apply the planned changes
+
+Always follow this workflow: understand -> plan -> execute
+
+## AVAILABLE GOALS
+
+**Exploration Actions (UNDERSTAND phase):**
+- list_files(Path) - List files in directory (e.g., list_files(\".\") or list_files(\"src\"))
+- read_file(Path) - Read a file (e.g., read_file(\"README.md\"))
+- search_pattern(Pattern) - Grep search (e.g., search_pattern(\"authenticate\"))
+- analyze_structure - Overview of all code files
+
+**Analysis Actions:**
+- analyze_observations(IdList, Question) - Analyze past observations by ID (e.g., analyze_observations([1,3], \"How do these relate?\"))
+- analyze_chunk(Content, Question) - Analyze inline content
+
+**Planning Actions (PLAN phase):**
+- create_plan(ItemList) - Create implementation plan (e.g., create_plan([\"Add import for requests\", \"Create fetch_data function\", \"Update main to call fetch_data\"]))
+- update_phase(Phase) - Manually change phase (understand/plan/execute)
+
+**Editing Actions (EXECUTE phase):**
+- edit_file(FilePath, EditPlan) - Edit existing file with LLM-generated changes
+  Example: edit_file(\"src/main.py\", \"Add error handling to the authenticate function\")
+- create_file(FilePath, Description) - Create new file with LLM-generated content
+  Example: create_file(\"src/utils/helpers.py\", \"Utility functions for string formatting and date parsing\")
+
+**Computation Actions:**
+- run_python(Code) - Execute Python code directly
+- generate_and_run_python(Task) - LLM generates and runs Python for a task
+- shell(Cmd) - Run any shell command
+
+**Control Flow:**
+- finish(Answer) - Complete with final answer/summary
+- checkpoint(Name) - Save state before risky operations
+- backtrack_to(Name) - Restore to checkpoint if needed
+- retry(Reason) - Request retry with explanation
+
+**Prolog Builtins (can be used inline in clauses):**
+- Arithmetic: X > Y, X < Y, X >= Y, X =< Y, X is Y + Z
+- Equality: X = Y, X == Y, X \\= Y, X \\== Y
+- Control: (Cond -> Then ; Else), (A ; B), \\+ Goal, !
+- Lists: member(X,L), append(A,B,C), length(L,N), nth0(I,L,X), last(L,X), reverse(L,R), sort(L,S), findall(X,Goal,L)
+- Types: atom(X), number(X), string(X), is_list(X), var(X), nonvar(X), ground(X)
+- Strings: atom_string(A,S), atom_concat(A,B,C), string_concat(A,B,C), sub_string(S,Before,Len,After,Sub), string_length(S,N), format(string(S),Fmt,Args)
+- Terms: functor(T,Name,Arity), arg(N,T,Arg), T =.. [Functor|Args]
+- Control: true, fail, false
+
+## STRATEGY GUIDANCE
+
+**Phase 1 - UNDERSTAND (Steps 1-5):**
+Focus on understanding before making any changes:
+- [list_files(\".\")] or [analyze_structure]
+- [read_file(\"README.md\")]
+- [search_pattern(\"keyword\")]
+- [read_file(\"src/main.py\"), analyze_observations([1,2], \"What's the entry point?\")]
+
+**Phase 2 - PLAN (Steps 6-8):**
+Create a concrete plan before editing:
+- [analyze_observations([1,2,3,4], \"What changes are needed to implement the task?\"), create_plan([\"Step 1...\", \"Step 2...\", \"Step 3...\"])]
+- The plan should be specific and actionable
+
+**Phase 3 - EXECUTE (Steps 9+):**
+Apply changes one at a time, verify after each:
+- [checkpoint(before_edit), edit_file(\"src/main.py\", \"Add authentication check at the start\")]
+- [create_file(\"src/utils/auth.py\", \"Authentication utility functions\")]
+- [read_file(\"src/main.py\"), analyze_observations([10], \"Was the edit applied correctly?\")]
+- [finish(\"Completed: Added auth check and created auth utils\")]
+
+## ADVANCED EXAMPLES
+
+**Editing with checkpoint:**
+[checkpoint(safe), read_file(\"src/app.py\"), edit_file(\"src/app.py\", \"Add logging to all API endpoints\"), read_file(\"src/app.py\"), analyze_observations([5,6], \"Was logging added correctly?\")]
+
+**Creating multiple related files:**
+[create_file(\"src/models/user.py\", \"User model with name, email, and password hash\"), create_file(\"src/models/__init__.py\", \"Export User model\")]
+
+**Conditional editing:**
+[read_file(\"requirements.txt\"), (sub_string(Content, _, _, _, \"requests\") -> finish(\"requests already installed\") ; edit_file(\"requirements.txt\", \"Add requests library\"))]
+
+**Complex multi-file refactoring:**
+[checkpoint(before_refactor), read_file(\"src/old_module.py\"), analyze_observations([1], \"What functions need to be moved?\"), create_file(\"src/new_module.py\", \"Extracted helper functions from old_module\"), edit_file(\"src/old_module.py\", \"Remove moved functions and add import from new_module\")]
+
+**Using disjunction for file discovery:**
+[(read_file(\"config.json\") ; read_file(\"config.yaml\") ; read_file(\"settings.py\")), analyze_observations([1], \"What config format is used?\")]
+
+**When to finish:**
+- All planned changes have been applied and verified
+- For Q&A tasks: you have enough evidence to answer confidently
+- Include summary of changes: finish(\"Completed: 1. Added auth check 2. Created utils module 3. Updated imports\")
+
+## OUTPUT FORMAT
+A Prolog list: [goal1, goal2, ...]
+
+Must be valid Prolog syntax. Strings in double quotes. No markdown."),
+    observation("Current Goal: {Goal}"),
+    observation("State:\n{StateDesc}"),
+    chat("Generate a clause for the coding agent. Consider the current phase (understand/plan/execute). Output ONLY a valid Prolog list.", ResponseText),
+    parse_clause(ResponseText, Clause).
+
+% Parse clause from LLM response
+parse_clause(Text, Clause) :-
+    (term_string(Clause, Text), is_list(Clause) ->
+        true
+    ;
+        % Fallback: wrap in list if single goal
+        (term_string(Goal, Text) ->
+            Clause = [Goal]
+        ;
+            Clause = [retry(parse_error(Text))]
+        )
+    ).
+
+% Sub-LLM for analysis
+analyze_chunk_llm(Chunk, Question, Analysis) :-
+    @("Analyze this content to answer the question.
+    
+    **Question:** {Question}
+    
+    **Content:**
+    {Chunk}
+    
+    Provide a concise analysis.").
+
+% Generate Python code
+generate_python_code(Task, Context, Code) :-
+    @("Generate Python code for this task.
+    
+    **Task:** {Task}
+    **Context:** {Context}
+    
+    Output ONLY executable Python 3 code, no markdown.").
+
+%% =============================================================
+%% CODE GENERATION LLM PREDICATES
+%% =============================================================
+
+% Generate edited file content
+llm_generate_edit(FilePath, OriginalContent, EditPlan, Context, NewContent) :-
+    clear_memory,
+    system("You are a code editing assistant. Apply the requested changes to a file.
+
+## Instructions
+1. Apply ONLY the changes described in the edit plan
+2. Preserve all existing functionality unless explicitly changing it
+3. Maintain consistent code style
+4. Add appropriate comments for significant changes
+5. Output ONLY the complete new file content
+6. No markdown code fences, no explanations - just the raw file content"),
+    observation("File: {FilePath}"),
+    observation("Edit Plan: {EditPlan}"),
+    observation("Context from agent analysis:\n{Context}"),
+    observation("Original File Content:\n{OriginalContent}"),
+    chat("Output the entire updated file content (no markdown, no explanations):", NewContent).
+
+% Generate new file content
+llm_generate_new_file(FilePath, Description, Context, Content) :-
+    clear_memory,
+    system("You are a code generation assistant. Create a new file based on the description.
+
+## Instructions
+1. Generate complete, working code
+2. Follow best practices for the file type
+3. Include appropriate imports/headers
+4. Add helpful comments
+5. Output ONLY the file content
+6. No markdown code fences, no explanations - just the raw file content"),
+    observation("File to Create: {FilePath}"),
+    observation("Description: {Description}"),
+    observation("Context from agent analysis:\n{Context}"),
+    chat("Output the new file content (no markdown, no explanations):", Content).
+
+%% =============================================================
+%% MAIN ENTRY POINTS
+%% =============================================================
+
+% Run coding task (edit/create files)
+coding_task(Task, WorkingDir, Result, FinalState) :-
+    format(string(FullTask), "Coding task: ~w", [Task]),
+    initial_state(FullTask, WorkingDir, State),
+    rlm_solve(implement(Task), State, Result, FinalState).
+
+% Run Code Q&A task (read-only analysis)
+code_qa(Question, WorkingDir, Result, FinalState) :-
+    format(string(Task), "Answer this question about the codebase: ~w", [Question]),
+    initial_state(Task, WorkingDir, State0),
+    % For Q&A, start in 'understand' phase and never edit
+    set_state(phase, qa, State0, State),
+    rlm_solve(answer(Question), State, Result, FinalState).
+
+%% =============================================================
+%% AGENT ENTRY POINT
+%% =============================================================
+
+agent_main :-
+    param("directory", "Code directory path", Directory),
+    param("task", "Coding task (e.g., 'Add error handling to auth')", Task),
+    Directory \= "", Task \= "",
+    
+    log(task="=== RLM Coding Agent ==="),
+    log(task="Task: ~w", [Task]),
+    log(task="Directory: ~w", [Directory]),
+    
+    coding_task(Task, Directory, Result, FinalState),
+    
+    % Extract state info for final answer
+    get_state(edits, FinalState, Edits),
+    get_state(plan, FinalState, Plan),
+    get_state(step, FinalState, Steps),
+    format_edits(Edits, EditsStr),
+    format_plan(Plan, 1, PlanStr),
+    
+    end_thinking,
+    clear_memory,
+    (Result = success(Answer) ->
+        system("You are a helpful coding assistant. Present the results of the coding task."),
+        observation("Task: {Task}"),
+        observation("Result: {Answer}"),
+        observation("Plan executed:\n{PlanStr}"),
+        observation("Files modified:\n{EditsStr}"),
+        observation("Total steps: {Steps}"),
+        chat("Present what was accomplished. List the files that were created or modified and summarize the changes.")
+    ;
+        Result = timeout(Reason) ->
+        format(string(Msg), "## Timeout\n\nThe task timed out after ~w steps: ~w\n\nPartial edits:\n~w", [Steps, Reason, EditsStr]),
+        answer(Msg)
+    ;
+        format(string(Msg), "## Error\n\nUnexpected result: ~w", [Result]),
+        answer(Msg)
+    ).
+
+% Q&A mode (read-only)
+agent_main :-
+    param("directory", "Code directory path", Directory),
+    param("question", "Question about the code", Question),
+    Directory \= "", Question \= "",
+    
+    log(task="=== RLM Code Q&A ==="),
+    log(task="Question: ~w", [Question]),
+    log(task="Directory: ~w", [Directory]),
+    
+    code_qa(Question, Directory, Result, FinalState),
+    
+    % Extract state info for context
+    get_state(step, FinalState, Steps),
+    get_state(history, FinalState, History),
+    length(History, NumObs),
+    
+    end_thinking,
+    clear_memory,
+    (Result = success(Answer) ->
+        system("You are a helpful code assistant."),
+        observation("Question: {Question}"),
+        observation("Answer from analysis: {Answer}"),
+        observation("Analysis took {Steps} steps and examined {NumObs} items."),
+        chat("Present the answer clearly and helpfully.")
+    ;
+        Result = timeout(Reason) ->
+        format(string(Msg), "## Timeout\n\nThe analysis timed out after ~w steps: ~w", [Steps, Reason]),
+        answer(Msg)
+    ;
+        format(string(Msg), "## Error\n\nUnexpected result: ~w", [Result]),
+        answer(Msg)
+    ).
+
+% Fallback - show help
+agent_main :-
+    end_thinking,
+    answer("## RLM Coding Agent\n\nA meta-interpreter coding agent that can understand, plan, and edit code.\n\n**Coding Mode:**\n- `directory`: Path to codebase\n- `task`: Coding task (e.g., 'Add logging to all API endpoints')\n\n**Q&A Mode:**\n- `directory`: Path to codebase\n- `question`: Question to answer\n\n**Features:**\n- LLM generates executable Prolog clauses\n- Three-phase workflow: Understand -> Plan -> Execute\n- edit_file and create_file actions with LLM-generated diffs\n- Checkpoint-based backtracking for safe edits").

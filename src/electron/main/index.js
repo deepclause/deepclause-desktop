@@ -10,6 +10,10 @@ import resourceResolver from './resource-resolver.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Ignore certificate errors (for development/testing - handles ERR_CERT_DATE_INVALID)
+// WARNING: This reduces security - only use if necessary
+app.commandLine.appendSwitch('ignore-certificate-errors');
+
 let mainWindow = null;
 let workspaceManager = null;
 

@@ -199,21 +199,76 @@ execute_goal(Goal, State, State, retry(unknown_goal(Goal))) :-
     log(error="Unknown goal: ~w", [Goal]).
 
 % Check if goal is a Prolog builtin
+% Arithmetic comparisons
 is_builtin(X > Y) :- number(X), number(Y).
 is_builtin(X < Y) :- number(X), number(Y).
 is_builtin(X >= Y) :- number(X), number(Y).
 is_builtin(X =< Y) :- number(X), number(Y).
+is_builtin(_ is _).
+
+% Equality/unification
 is_builtin(X == Y).
 is_builtin(X \== Y).
 is_builtin(X = Y).
+is_builtin(X \= Y).
+
+% Control flow
+is_builtin((_ ; _)).      % Disjunction (or)
+is_builtin((_ -> _ ; _)). % If-then-else
+is_builtin((_ -> _)).     % If-then
+is_builtin(\+ _).         % Negation as failure
+is_builtin(not(_)).
+is_builtin(!).
+
+% List operations
 is_builtin(member(_, _)).
 is_builtin(append(_, _, _)).
 is_builtin(length(_, _)).
+is_builtin(nth0(_, _, _)).
+is_builtin(nth1(_, _, _)).
+is_builtin(last(_, _)).
+is_builtin(reverse(_, _)).
+is_builtin(sort(_, _)).
+is_builtin(msort(_, _)).
+is_builtin(findall(_, _, _)).
+
+% Type checks
 is_builtin(atom(_)).
 is_builtin(number(_)).
+is_builtin(integer(_)).
+is_builtin(float(_)).
 is_builtin(is_list(_)).
+is_builtin(string(_)).
+is_builtin(var(_)).
+is_builtin(nonvar(_)).
+is_builtin(ground(_)).
+is_builtin(compound(_)).
+
+% String operations
+is_builtin(atom_string(_, _)).
+is_builtin(atom_codes(_, _)).
+is_builtin(atom_chars(_, _)).
+is_builtin(atom_concat(_, _, _)).
+is_builtin(string_codes(_, _)).
+is_builtin(string_chars(_, _)).
+is_builtin(string_concat(_, _, _)).
+is_builtin(sub_string(_, _, _, _, _)).
+is_builtin(string_length(_, _)).
+is_builtin(upcase_atom(_, _)).
+is_builtin(downcase_atom(_, _)).
+is_builtin(format(_, _, _)).
+is_builtin(format(_, _)).
+
+% Term manipulation
+is_builtin(functor(_, _, _)).
+is_builtin(arg(_, _, _)).
+is_builtin(_ =.. _).
+is_builtin(copy_term(_, _)).
+
+% Control
 is_builtin(true).
 is_builtin(fail).
+is_builtin(false).
 
 % Check if goal is an RLM action
 is_rlm_action(list_files(_)).
@@ -418,7 +473,15 @@ llm_generate_clause(Goal, StateDesc, Clause) :-
 - backtrack_to(Name) - Restore to checkpoint if needed
 - retry(Reason) - Request retry with explanation
 
-**Prolog Builtins:** X > Y, X < Y, X = Y, member(X,List), length(L,N), true, fail
+**Prolog Builtins (can be used inline in clauses):**
+- Arithmetic: X > Y, X < Y, X >= Y, X =< Y, X is Y + Z
+- Equality: X = Y, X == Y, X \\= Y, X \\== Y
+- Control: (Cond -> Then ; Else), (A ; B), \\+ Goal, !
+- Lists: member(X,L), append(A,B,C), length(L,N), nth0(I,L,X), last(L,X), reverse(L,R), sort(L,S), findall(X,Goal,L)
+- Types: atom(X), number(X), string(X), is_list(X), var(X), nonvar(X), ground(X)
+- Strings: atom_string(A,S), atom_concat(A,B,C), string_concat(A,B,C), sub_string(S,Before,Len,After,Sub), string_length(S,N), format(string(S),Fmt,Args)
+- Terms: functor(T,Name,Arity), arg(N,T,Arg), T =.. [Functor|Args]
+- Control: true, fail, false
 
 ## STRATEGY GUIDANCE
 
@@ -435,8 +498,28 @@ Use MEDIUM clauses (2-4 goals). Chain related actions:
 
 **Phase 3 - Deep Analysis & Synthesis (Steps 9+):**
 Use LONGER clauses (3-6 goals). Execute multi-step plans:
-- [read_file(\"src/auth.py\"), read_file(\"src/user.py\"), analyze_observations([3,4,5], \"How does auth flow work?\"), finish(\"The auth system uses...\" )]
+- [read_file(\"src/auth.py\"), read_file(\"src/user.py\"), analyze_observations([3,4,5], \"How does auth flow work?\"), finish(\"The auth system uses...\")]
 - [checkpoint(before_test), generate_and_run_python(\"parse and analyze the config\"), analyze_observations([6], \"What did we learn?\")]
+
+## ADVANCED EXAMPLES WITH PROLOG BUILTINS
+
+**Conditional logic with if-then-else:**
+[search_pattern(\"test\"), (member(\"found\", Results) -> read_file(\"tests/test_main.py\") ; search_pattern(\"spec\"))]
+
+**Using disjunction (try alternatives):**
+[(read_file(\"config.json\") ; read_file(\"config.yaml\") ; read_file(\"settings.py\")), analyze_observations([1], \"What config format is used?\")]
+
+**String manipulation:**
+[shell(\"find . -name '*.py' | head -5\"), format(string(Msg), \"Found files: ~w\", [Output]), analyze_chunk(Msg, \"Which file is the entry point?\")]
+
+**List operations in analysis:**
+[search_pattern(\"import\"), findall(F, member(match(F,_), Matches), Files), length(Files, N), (N > 10 -> analyze_observations([1], \"Too many imports - what are the key ones?\") ; finish(\"Small codebase with limited imports\"))]
+
+**Checkpoint before risky operation:**
+[checkpoint(safe_state), generate_and_run_python(\"Parse the JSON and extract all API endpoints\"), (Success == true -> analyze_observations([1], \"What endpoints exist?\") ; backtrack_to(safe_state))]
+
+**Complex multi-file analysis:**
+[read_file(\"src/models/user.py\"), read_file(\"src/models/auth.py\"), read_file(\"src/api/routes.py\"), analyze_observations([1,2,3], \"How do these three components interact? Trace the auth flow from API to models.\"), finish(\"The authentication flow works as follows: ...\")]
 
 **When to finish:**
 - You have gathered enough evidence to answer confidently

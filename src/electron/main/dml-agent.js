@@ -932,6 +932,58 @@ export class DMLAgent {
         return `DML saved to ${filepath}`;
     }
 
+    /**
+     * Save DML to an arbitrary file path (used by CLI for paths outside standard directories)
+     * @param {string} filepath - The full file path to save to
+     * @returns {string} Success message
+     */
+    saveDmlToPath(filepath) {
+        if (!this.lastGeneratedDml) {
+            throw new Error("No DML code to save. Generate some DML first.");
+        }
+
+        // Ensure .dml extension
+        let targetPath = filepath;
+        if (!targetPath.endsWith('.dml')) {
+            targetPath += '.dml';
+        }
+
+        // Resolve to absolute path
+        targetPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(targetPath);
+        
+        // Ensure directory exists
+        const dir = path.dirname(targetPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        fs.writeFileSync(targetPath, this.lastGeneratedDml);
+        return `DML saved to ${targetPath}`;
+    }
+
+    /**
+     * Run raw DML content directly (used by CLI for files outside standard directories)
+     * @param {string} content - The raw DML code to execute
+     * @param {string} parameters - JSON string of parameters
+     * @returns {Promise<string>} Execution output
+     */
+    async runDmlContent(content, parameters = "{}") {
+        const paramsDict = safeParseJson(parameters, {});
+        const abortController = new AbortController();
+        
+        return await runDmlCode(content, this.workspacePath, {
+            params: paramsDict,
+            sessionPrefix: 'cli',
+            inputCallback: this.inputCallback,
+            outputCallback: this.outputCallback,
+            collect: true,
+            rich: true,
+            echo: true,
+            swipl: null,
+            abortController,
+        });
+    }
+
     async runDmlFile(filename, parameters = "{}", conversationId = null) {
         // Determine dirs to search: all configured example dirs, learned, + optional session-specific folder
         const dirs = [...this.dmlExamplesDirs, this.learnedExamplesDir];

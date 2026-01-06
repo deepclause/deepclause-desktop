@@ -3059,7 +3059,7 @@ class BashExecutorTool extends Tool {
                     const chunk = data.toString();
                     stdout += chunk;
                     // Stream the output to the UI
-                    this.streamProgress(chunk);
+                    // this.streamProgress(chunk);
                     // Prevent buffer overflow
                     if (stdout.length > 10 * 1024 * 1024) {
                         stdout = stdout.slice(-5 * 1024 * 1024);
@@ -3071,7 +3071,7 @@ class BashExecutorTool extends Tool {
                     const chunk = data.toString();
                     stderr += chunk;
                     // Stream stderr with a prefix to distinguish it
-                    this.streamProgress(`⚠️ ${chunk}`);
+                    // this.streamProgress(`⚠️ ${chunk}`);
                     // Prevent buffer overflow
                     if (stderr.length > 10 * 1024 * 1024) {
                         stderr = stderr.slice(-5 * 1024 * 1024);
