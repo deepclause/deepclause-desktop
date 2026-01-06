@@ -266,42 +266,40 @@ async function runDmlCode(dmlCode, workspaceDir, {
     const sessionId = buildSessionId(sessionPrefix);
     const shouldCleanupSwipl = !swipl;
     
+    // Factory function to create fresh SWIPL instances for sub-DMLs
+    const swiplFactory = async () => {
+        if (process.env.DML_DEV_MODE) {
+            return await SWIPL({ 
+                arguments: ["-q"], 
+                on_output: (line) => {
+                    if (process.env.DEBUG === '1') {
+                        debugLog(`SWI-Prolog (sub):`, line);
+                    }
+                }
+            });
+        } else {
+            const miPath = miQsavePath || path.join(os.homedir(), '.deepclause', 'mi.qsave');
+            if (!fs.existsSync(miPath)) {
+                throw new Error(`mi.qsave not found at ${miPath}`);
+            }
+            return await SWIPL({ 
+                arguments: ["-x", "mi.qsave"], 
+                on_output: (line) => {
+                    if (process.env.DEBUG === '1') {
+                        debugLog(`SWI-Prolog (sub):`, line);
+                    }
+                },
+                preRun: [(module) => { 
+                    const miData = fs.readFileSync(miPath);
+                    module.FS.writeFile('mi.qsave', miData); 
+                }]
+            });
+        }
+    };
+    
     if (!swipl) {
         try {
-            if (process.env.DML_DEV_MODE) {
-                swipl = await SWIPL({ 
-                    arguments: ["-q"], 
-                    on_output: (line) => {
-                        if (process.env.DEBUG === '1') {
-                            debugLog(`SWI-Prolog:`, line);
-                        }
-                    }
-                });
-            } else {
-                // Always use global ~/.deepclause/mi.qsave path
-                const miPath = miQsavePath || path.join(os.homedir(), '.deepclause', 'mi.qsave');
-                
-                if (!fs.existsSync(miPath)) {
-                    throw new Error(`mi.qsave not found at ${miPath}`);
-                }
-                
-                debugLog(`[SWIPL] Using mi.qsave from: ${miPath}`);
-                
-                swipl = await SWIPL({ 
-                    arguments: ["-x", "mi.qsave"], 
-                    on_output: (line) => {
-                        if (process.env.DEBUG === '1') {
-                            debugLog(`SWI-Prolog:`, line);
-                        }
-                    },
-                    preRun: [(module) => { 
-                        debugLog("[PRE-RUN] Loading mi.qsave into SWIPL filesystem");
-                        const miData = fs.readFileSync(miPath);
-                        module.FS.writeFile('mi.qsave', miData); }
-                    ]
-                });
-            }
-
+            swipl = await swiplFactory();
         } catch (error) {
             debugLog(`[ABORT] Error creating SWIPL instance for conversation ${conversationId}:`, error);
             throw error;
@@ -312,7 +310,7 @@ async function runDmlCode(dmlCode, workspaceDir, {
 
     try {
         debugLog(`[ABORT] Starting runDmlAsync with abort signal:`, abortController?.signal.aborted);
-        for await (const line of runDmlAsync(dmlCode, sessionId, params, workspaceDir, swipl, inputCallback, memory, abortController?.signal)) {
+        for await (const line of runDmlAsync(dmlCode, sessionId, params, workspaceDir, swipl, inputCallback, memory, abortController?.signal, swiplFactory)) {
             if (abortController?.signal.aborted) {
                 debugLog(`[ABORT] Abort detected in runDmlCode loop`);
                 break;

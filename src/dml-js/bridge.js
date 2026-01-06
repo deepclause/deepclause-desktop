@@ -332,6 +332,49 @@ The main execution logic goes in the \`agent_main\` predicate.
 - \`agent_loop(TaskPrompt, Output, Options)\` - Use an autonotmous sub agent to try solve the task given by TaskPrompt using the tools provided in the Options.
     Example:  agent_loop("Find  recipes for Chicken Tika Massala", Result,[tools([brave_search])]) 
 
+## Sub-DML Execution
+- \`run_dml(DmlCode, Output)\` - Execute inline DML code as a sub-agent
+  - Creates isolated execution context (separate session, memory)
+  - Captures all output (yield, answer, chat) as a string in Output
+  - Sub-DML has access to all tools available to the parent
+  - Inherits parent's parameters
+  - Example: \`run_dml("agent_main :- tool(websearch(\\"AI news\\"), R), answer(R).", SearchOutput)\`
+
+- \`run_dml(DmlCode, Params, Output)\` - Execute inline DML with custom parameters
+  - Params is a dictionary that replaces parent params (workspace_path is preserved)
+  - Example: \`run_dml(Code, _{topic: "quantum computing", max_results: 10}, Output)\`
+  
+- \`run_dml_file(Filename, Output)\` - Execute a DML file as a sub-agent
+  - Searches for file in: current dir, workspace, dml_examples/, dml_examples/learned/, ~/.deepclause/dml_examples/
+  - Inherits parent's parameters
+  - Example: \`run_dml_file("deep_research.dml", ResearchOutput)\`
+
+- \`run_dml_file(Filename, Params, Output)\` - Execute a DML file with custom parameters
+  - Params is a dictionary that replaces parent params (workspace_path is preserved)
+  - Example: \`run_dml_file("deep_research.dml", _{topic: "AI safety"}, Output)\`
+  - Use this to pass specific parameters to reusable DML components
+  
+When to use sub-DML execution:
+- Orchestrating multiple specialized agents (e.g., research + analysis + summary)
+- Building pipelines of processing steps
+- Reusing existing DML files as building blocks
+- Conditional execution of different strategies based on context
+
+Example - Orchestrating multiple agents with parameters:
+\`\`\`prolog
+agent_main :-
+    param("topic", "Research topic", Topic),
+    % Run specialized research sub-agent with custom params
+    run_dml_file("deep_research.dml", _{topic: Topic}, ResearchResults),
+    % Run analysis using a saved DML file with different params
+    run_dml_file("analyzer.dml", _{input: ResearchResults, depth: "detailed"}, AnalysisResults),
+    % Synthesize results
+    end_thinking,
+    observation("Research: {ResearchResults}"),
+    observation("Analysis: {AnalysisResults}"),
+    chat("Provide a comprehensive summary combining both findings.").
+\`\`\`
+
 ## Context Management
 - \`system(Text)\` - Add system message to agent memory
 - \`user(Text)\` - Add user message to agent memory  
@@ -3101,8 +3144,9 @@ export async function init(mcpServers = []) {
 
 /**
  * Asynchronously run DML code using SWIPL cooperative yielding
+ * @param {Function} swiplFactory - Optional factory function to create fresh SWIPL instances for sub-DMLs
  */
-export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null, workspaceDir = "./workspace", swipl = null, inputCallback = null, memory = [], abortSignal = null) {
+export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null, workspaceDir = "./workspace", swipl = null, inputCallback = null, memory = [], abortSignal = null, swiplFactory = null) {
     
     debugLog('[ABORT] runDmlAsync started with abort signal:', abortSignal ? 'provided' : 'null');
     if (abortSignal) {
@@ -3165,8 +3209,21 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
             return;
         }
 
-        await swipl.FS.mkdir('/workspace');
-        await swipl.FS.mount(swipl.FS.filesystems.NODEFS, { root: workspaceDir }, '/workspace');
+        // Mount workspace if not already mounted (avoid re-mounting in sub-DML calls)
+        try {
+            // Check if /workspace already exists and is mounted
+            const stat = swipl.FS.stat('/workspace');
+            writeLog('/workspace already exists, skipping mount');
+        } catch (e) {
+            // /workspace doesn't exist, create and mount it
+            try {
+                await swipl.FS.mkdir('/workspace');
+                await swipl.FS.mount(swipl.FS.filesystems.NODEFS, { root: workspaceDir }, '/workspace');
+                writeLog('Created and mounted /workspace');
+            } catch (mountErr) {
+                writeLog(`Error mounting workspace: ${mountErr.message}`);
+            }
+        }
 
         // Announce log file path to caller
         if (logFilePath) {
@@ -3573,6 +3630,190 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
                             await swipl.prolog.query(`
                                 cmdline:send_input_to_engine('${engineId}', ToolsDesc)
                             `, {ToolsDesc: toolsDesc}).once();
+
+                        } else if (func === 'run_sub_dml') {
+                            // Execute inline DML code as a sub-session with a fresh SWIPL instance
+                            // Convert from PrologString to JS string if needed
+                            const subDmlCode = args[0]?.toString ? args[0].toString() : String(args[0]);
+                            
+                            // Convert subParams from Prolog dict to plain JS object
+                            // args[1] may be a Prolog dict object that needs conversion
+                            let subParams = parameters; // Default to parent params
+                            if (args[1] !== undefined && args[1] !== null) {
+                                writeLog(`run_sub_dml args[1] type: ${typeof args[1]}, value: ${JSON.stringify(args[1])}`);
+                                if (typeof args[1] === 'object') {
+                                    // It's already an object (swipl-wasm converted it)
+                                    subParams = args[1];
+                                } else if (args[1]?.toJSON) {
+                                    subParams = args[1].toJSON();
+                                } else {
+                                    subParams = args[1];
+                                }
+                            }
+                            
+                            writeLog(`run_sub_dml invoked, code length=${subDmlCode?.length || 0}, params=${JSON.stringify(subParams)}`);
+                            yield `<log>Starting sub-DML execution...</log>\n`;
+                            
+                            // Generate unique sub-session ID
+                            const subSessionId = `sub_${sessionId}_${Date.now()}`;
+                            
+                            // Collect all output from sub-DML
+                            let subOutput = "";
+                            let subSwipl = null;
+                            try {
+                                // Create fresh SWIPL instance for sub-DML if factory is available
+                                if (swiplFactory) {
+                                    writeLog('Creating fresh SWIPL instance for sub-DML');
+                                    subSwipl = await swiplFactory();
+                                } else {
+                                    writeLog('No SWIPL factory available, reusing parent instance (may cause issues)');
+                                    subSwipl = swipl;
+                                }
+                                
+                                for await (const part of runDmlAsync(subDmlCode, subSessionId, subParams, workspaceDir, subSwipl, inputCallback, [], abortSignal, swiplFactory)) {
+                                    if (abortSignal?.aborted) {
+                                        writeLog('Aborting sub-DML due to abort signal');
+                                        break;
+                                    }
+                                    if (typeof part === 'string') {
+                                        // Filter out log messages from sub-DML output, optionally stream them
+                                        if (part.startsWith('<log>')) {
+                                            yield part; // Stream log messages to parent
+                                        } else {
+                                            subOutput += part;
+                                        }
+                                    }
+                                }
+                            } catch (subDmlError) {
+                                subOutput = `Sub-DML Error: ${subDmlError.message}`;
+                                writeLog(`run_sub_dml error: ${subDmlError.message}`);
+                            }
+                            
+                            // Clean sub-DML output: remove metadata like <end_thinking>, status lines, <log> tags, etc.
+                            let cleanOutput = subOutput
+                                .replace(/<end_thinking>/g, '')
+                                .replace(/<log>.*?<\/log>/gs, '')  // Remove all <log>...</log> tags
+                                .replace(/:- \*\*Agent.*?\*\*/g, '')
+                                .replace(/DML execution completed.*?\.log/g, '')
+                                .replace(/Log saved to:.*?\.log/g, '')
+                                .trim();
+                            
+                            writeLog(`run_sub_dml completed, raw output length=${subOutput.length}, clean output length=${cleanOutput.length}`);
+                            yield `<log>Sub-DML execution completed.</log>\n`;
+                            
+                            await swipl.prolog.query(`
+                                cmdline:send_input_to_engine('${engineId}', SubDmlOutput)
+                            `, {SubDmlOutput: {output: cleanOutput, success: true}}).once();
+
+                        } else if (func === 'run_sub_dml_file') {
+                            // Execute a DML file as a sub-session
+                            // Convert from PrologString to JS string if needed
+                            const filename = args[0]?.toString ? args[0].toString() : String(args[0]);
+                            
+                            // Convert subParams from Prolog dict to plain JS object
+                            let subParams = parameters; // Default to parent params
+                            if (args[1] !== undefined && args[1] !== null) {
+                                writeLog(`run_sub_dml_file args[1] type: ${typeof args[1]}, value: ${JSON.stringify(args[1])}`);
+                                if (typeof args[1] === 'object') {
+                                    subParams = args[1];
+                                } else if (args[1]?.toJSON) {
+                                    subParams = args[1].toJSON();
+                                } else {
+                                    subParams = args[1];
+                                }
+                            }
+                            
+                            writeLog(`run_sub_dml_file invoked for file: ${filename}, params=${JSON.stringify(subParams)}`);
+                            yield `<log>Loading DML file: ${filename}</log>\n`;
+                            
+                            // Search for file in standard locations
+                            const searchPaths = [
+                                filename,
+                                path.join(workspaceDir, filename),
+                                path.join(workspaceDir, 'dml_examples', filename),
+                                path.join(workspaceDir, 'dml_examples', 'learned', filename),
+                                `dml_examples/${filename}`,
+                                `dml_examples/learned/${filename}`
+                            ];
+                            
+                            // Also check ~/.deepclause/dml_examples paths
+                            const homeDir = os.homedir();
+                            searchPaths.push(
+                                path.join(homeDir, '.deepclause', 'dml_examples', filename),
+                                path.join(homeDir, '.deepclause', 'dml_examples', 'learned', filename)
+                            );
+                            
+                            let subDmlCode = null;
+                            let foundPath = null;
+                            for (const searchPath of searchPaths) {
+                                try {
+                                    if (fs.existsSync(searchPath)) {
+                                        subDmlCode = fs.readFileSync(searchPath, 'utf-8');
+                                        foundPath = searchPath;
+                                        break;
+                                    }
+                                } catch (e) {
+                                    // Continue searching
+                                }
+                            }
+                            
+                            let subOutput = "";
+                            if (!subDmlCode) {
+                                subOutput = `DML file not found: ${filename}. Searched in: ${searchPaths.join(', ')}`;
+                                writeLog(subOutput);
+                                yield `<log>Error: ${subOutput}</log>\n`;
+                            } else {
+                                writeLog(`Found DML file at: ${foundPath}`);
+                                yield `<log>Found DML file: ${foundPath}</log>\n`;
+                                
+                                // Generate unique sub-session ID
+                                const subSessionId = `sub_${sessionId}_${path.basename(filename, '.dml')}_${Date.now()}`;
+                                
+                                let subSwipl = null;
+                                try {
+                                    // Create fresh SWIPL instance for sub-DML if factory is available
+                                    if (swiplFactory) {
+                                        writeLog('Creating fresh SWIPL instance for sub-DML file');
+                                        subSwipl = await swiplFactory();
+                                    } else {
+                                        writeLog('No SWIPL factory available, reusing parent instance (may cause issues)');
+                                        subSwipl = swipl;
+                                    }
+                                    
+                                    for await (const part of runDmlAsync(subDmlCode, subSessionId, subParams, workspaceDir, subSwipl, inputCallback, [], abortSignal, swiplFactory)) {
+                                        if (abortSignal?.aborted) {
+                                            writeLog('Aborting sub-DML file due to abort signal');
+                                            break;
+                                        }
+                                        if (typeof part === 'string') {
+                                            if (part.startsWith('<log>')) {
+                                                yield part; // Stream log messages to parent
+                                            } else {
+                                                subOutput += part;
+                                            }
+                                        }
+                                    }
+                                } catch (subDmlError) {
+                                    subOutput = `Sub-DML File Error: ${subDmlError.message}`;
+                                    writeLog(`run_sub_dml_file error: ${subDmlError.message}`);
+                                }
+                            }
+                            
+                            // Clean sub-DML output: remove metadata like <end_thinking>, status lines, <log> tags, etc.
+                            let cleanOutput = subOutput
+                                .replace(/<end_thinking>/g, '')
+                                .replace(/<log>.*?<\/log>/gs, '')  // Remove all <log>...</log> tags
+                                .replace(/:- \*\*Agent.*?\*\*/g, '')
+                                .replace(/DML execution completed.*?\.log/g, '')
+                                .replace(/Log saved to:.*?\.log/g, '')
+                                .trim();
+                            
+                            writeLog(`run_sub_dml_file completed, raw output length=${subOutput.length}, clean output length=${cleanOutput.length}`);
+                            yield `<log>DML file execution completed.</log>\n`;
+                            
+                            await swipl.prolog.query(`
+                                cmdline:send_input_to_engine('${engineId}', SubDmlOutput)
+                            `, {SubDmlOutput: {output: cleanOutput, success: subDmlCode !== null}}).once();
 
                         } /*else if (func == 'get_dml_files_description') {
                             let desc = "DML files are text files with .dml extension containing DML code.";

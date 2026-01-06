@@ -709,6 +709,116 @@ tool(some_mcp_tool("argument"), Result).
 
 **Tool output**: String or JSON (depending on tool)
 
+### 2b. Sub-DML Execution
+
+DML programs can call other DML programs, enabling composition and reuse of agents.
+
+#### `run_dml/2` - Execute inline DML code
+```prolog
+run_dml(DmlCode, Output)
+```
+
+**Example**:
+```prolog
+% Execute inline DML code as a sub-agent
+run_dml("agent_main :- tool(websearch(\"AI news\"), R), answer(R).", SearchOutput),
+log("Sub-agent returned: {SearchOutput}")
+```
+
+- Creates isolated execution context (separate session and memory)
+- Captures all output (yield, answer, chat) as a string
+- Sub-DML has access to all tools available to the parent
+- Inherits parent's parameters
+- Useful for dynamically generated agent logic
+
+#### `run_dml/3` - Execute inline DML code with parameters
+```prolog
+run_dml(DmlCode, Params, Output)
+```
+
+**Example**:
+```prolog
+% Execute inline DML code with custom parameters
+run_dml(Code, _{topic: "quantum computing", max_results: 10}, Output)
+```
+
+- Params is a dictionary that replaces parent params (workspace_path is preserved)
+- Sub-DML can access these params via `param/3`
+
+#### `run_dml_file/2` - Execute a DML file
+```prolog
+run_dml_file(Filename, Output)
+```
+
+**Example**:
+```prolog
+% Execute a saved DML file
+run_dml_file("deep_research.dml", ResearchOutput),
+observation("Research results: {ResearchOutput}")
+```
+
+#### `run_dml_file/3` - Execute a DML file with parameters
+```prolog
+run_dml_file(Filename, Params, Output)
+```
+
+**Example**:
+```prolog
+% Execute a DML file with custom parameters
+run_dml_file("deep_research.dml", _{topic: "AI safety", depth: "comprehensive"}, Output)
+```
+
+- Params is a dictionary that replaces parent params (workspace_path is preserved)
+- This is the recommended way to pass data to reusable DML components
+
+**File search paths** (in order):
+1. Exact path provided
+2. `{workspace}/` directory
+3. `{workspace}/dml_examples/`
+4. `{workspace}/dml_examples/learned/`
+5. `dml_examples/`
+6. `dml_examples/learned/`
+7. `~/.deepclause/dml_examples/`
+8. `~/.deepclause/dml_examples/learned/`
+
+**When to use sub-DML execution**:
+- Orchestrating multiple specialized agents
+- Building pipelines of processing steps
+- Reusing existing DML files as building blocks
+- Conditional execution of different strategies
+
+**Example - Multi-agent orchestration with parameters**:
+```prolog
+agent_main :-
+    param("topic", "Research topic", Topic),
+    
+    % Run technical analysis sub-agent with topic parameter
+    run_dml_file("technical_analysis.dml", _{topic: Topic}, TechResults),
+    
+    % Run market research sub-agent with same topic
+    run_dml_file("market_research.dml", _{topic: Topic, region: "global"}, MarketResults),
+    
+    % Synthesize results
+    end_thinking,
+    observation("Technical analysis: {TechResults}"),
+    observation("Market research: {MarketResults}"),
+    chat("Provide a comprehensive report combining both analyses.").
+```
+
+**Example - Dynamic sub-agent**:
+```prolog
+agent_main :-
+    param("query", "Search query", Query),
+    
+    % Build and execute a dynamic search agent
+    format(string(SubAgent), 
+        "agent_main :- tool(websearch(\"~w\"), R), answer(R).", 
+        [Query]),
+    run_dml(SubAgent, SearchResults),
+    
+    answer("Search results: {SearchResults}").
+```
+
 ### 3. Output and Logging
 
 #### `yield/1` - Stream output to user
