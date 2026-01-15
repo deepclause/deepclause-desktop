@@ -3348,7 +3348,7 @@ export async function* runDmlAsync(dmlCode, sessionId = null, parameters = null,
 
             // Main cooperative loop
             let iteration = 0;
-            const maxIterations = 10000; // Safety limit
+            const maxIterations = 100000; // Safety limit
             let finished = false;
 
             while (!finished && iteration < maxIterations) {

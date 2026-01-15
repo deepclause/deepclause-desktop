@@ -1,0 +1,734 @@
+% rlm_agent.dml - Generic Meta-Interpreter RLM Agent
+% 
+% A generic agent that uses LLM-generated Prolog clauses to solve arbitrary tasks.
+% Has access to web search, webpage fetching, and shell/VM execution.
+%
+% Key design:
+% - RLM as Prolog meta-interpreter
+% - Explore first, then synthesize a solution clause
+% - Generated clauses can use full Prolog subset + tools
+% - Self-correcting: retries on failure with learned context
+% - Finishes only when a complete solution clause succeeds
+
+%% =============================================================
+%% STATE MANAGEMENT
+%% =============================================================
+
+% Initial state for a task
+initial_state(Task, State) :-
+    State = [
+        task(Task),
+        step(1),
+        max_iter(25),
+        phase(explore),       % explore -> synthesize -> verify
+        gathered_info([]),    % Information gathered during exploration
+        solution_attempts([]), % Previous solution attempts
+        history([]),
+        observations([]),
+        failures([]),
+        current_solution([])  % The candidate solution clause
+    ].
+
+% Get a value from state
+get_state(Key, State, Value) :-
+    member(Term, State),
+    Term =.. [Key, Value], !.
+get_state(_, _, undefined).
+
+% Update state (functional - returns new state)
+set_state(Key, Value, State, NewState) :-
+    NewTerm =.. [Key, Value],
+    (select(OldTerm, State, Rest), OldTerm =.. [Key, _] ->
+        NewState = [NewTerm|Rest]
+    ;
+        NewState = [NewTerm|State]
+    ).
+
+% Increment step counter
+inc_step(State, NewState) :-
+    get_state(step, State, N),
+    N1 is N + 1,
+    set_state(step, N1, State, NewState).
+
+% Add to history
+add_history(Action, Observation, State, NewState) :-
+    get_state(history, State, History),
+    get_state(step, State, Step),
+    append(History, [entry(Step, Action, Observation)], NewHistory),
+    set_state(history, NewHistory, State, NewState).
+
+% Add to observations
+add_observation(Obs, State, NewState) :-
+    get_state(observations, State, Observations),
+    get_state(step, State, Step),
+    append(Observations, [obs(Step, Obs)], NewObservations),
+    set_state(observations, NewObservations, State, NewState).
+
+% Add gathered info
+add_info(Info, State, NewState) :-
+    get_state(gathered_info, State, Infos),
+    append(Infos, [Info], NewInfos),
+    set_state(gathered_info, NewInfos, State, NewState).
+
+% Record a failure
+add_failure(Clause, Reason, State, NewState) :-
+    get_state(failures, State, Failures),
+    get_state(step, State, Step),
+    append(Failures, [failure(Step, Clause, Reason)], NewFailures),
+    set_state(failures, NewFailures, State, NewState).
+
+% Record solution attempt
+add_solution_attempt(Clause, Result, State, NewState) :-
+    get_state(solution_attempts, State, Attempts),
+    get_state(step, State, Step),
+    append(Attempts, [attempt(Step, Clause, Result)], NewAttempts),
+    set_state(solution_attempts, NewAttempts, State, NewState).
+
+%% =============================================================
+%% META-INTERPRETER CORE
+%% =============================================================
+
+% Main entry: solve a task
+rlm_solve(Task, State, Result, FinalState) :-
+    get_state(step, State, Step),
+    get_state(max_iter, State, MaxIter),
+    (Step > MaxIter ->
+        Result = timeout("Max iterations reached"),
+        FinalState = State,
+        log(task="RLM timeout after ~w steps", [Step])
+    ;
+        log(task="RLM Step ~w: phase=~w", [Step, Phase]),
+        get_state(phase, State, Phase),
+        solve_phase(Phase, Task, State, Result, FinalState)
+    ).
+
+%% =============================================================
+%% PHASE: EXPLORE - Gather information about the task
+%% =============================================================
+
+solve_phase(explore, Task, State, Result, FinalState) :-
+    format_state_for_llm(State, StateDesc),
+    llm_generate_exploration(Task, StateDesc, Clause),
+    log(task="Exploration clause: ~w", [Clause]),
+    
+    (execute_clause(Clause, State, NewState, ClauseResult) ->
+        handle_explore_result(Task, ClauseResult, NewState, Result, FinalState)
+    ;
+        add_failure(Clause, "Execution failed", State, FailState),
+        inc_step(FailState, RetryState),
+        rlm_solve(Task, RetryState, Result, FinalState)
+    ).
+
+handle_explore_result(Task, move_to_synthesize, State, Result, FinalState) :- !,
+    set_state(phase, synthesize, State, State1),
+    inc_step(State1, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+handle_explore_result(Task, continue, State, Result, FinalState) :- !,
+    inc_step(State, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+handle_explore_result(_, finished(Answer), State, success(Answer), State) :- !.
+
+handle_explore_result(Task, retry(Reason), State, Result, FinalState) :- !,
+    log(task="Retrying exploration: ~w", [Reason]),
+    inc_step(State, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+%% =============================================================
+%% PHASE: SYNTHESIZE - Generate a solution clause
+%% =============================================================
+
+solve_phase(synthesize, Task, State, Result, FinalState) :-
+    format_state_for_llm(State, StateDesc),
+    llm_generate_solution(Task, StateDesc, SolutionClause),
+    log(task="Solution clause: ~w", [SolutionClause]),
+    
+    % Store the solution attempt
+    set_state(current_solution, SolutionClause, State, State1),
+    set_state(phase, verify, State1, State2),
+    inc_step(State2, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+%% =============================================================
+%% PHASE: VERIFY - Execute the solution clause
+%% =============================================================
+
+solve_phase(verify, Task, State, Result, FinalState) :-
+    get_state(current_solution, State, SolutionClause),
+    log(task="Verifying solution: ~w", [SolutionClause]),
+    
+    (execute_clause(SolutionClause, State, NewState, ClauseResult) ->
+        handle_verify_result(Task, ClauseResult, SolutionClause, NewState, Result, FinalState)
+    ;
+        % Solution failed to execute
+        add_solution_attempt(SolutionClause, failed_execution, State, State1),
+        add_failure(SolutionClause, "Solution execution failed", State1, State2),
+        set_state(phase, synthesize, State2, State3),
+        inc_step(State3, RetryState),
+        rlm_solve(Task, RetryState, Result, FinalState)
+    ).
+
+handle_verify_result(_, finished(Answer), SolutionClause, State, success(Answer), FinalState) :- !,
+    add_solution_attempt(SolutionClause, success(Answer), State, FinalState),
+    log(task="Solution succeeded: ~w", [Answer]).
+
+handle_verify_result(Task, continue, SolutionClause, State, Result, FinalState) :- !,
+    % Solution ran but didn't finish - needs more work
+    add_solution_attempt(SolutionClause, incomplete, State, State1),
+    set_state(phase, synthesize, State1, State2),
+    inc_step(State2, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+handle_verify_result(Task, retry(Reason), SolutionClause, State, Result, FinalState) :- !,
+    add_solution_attempt(SolutionClause, retry(Reason), State, State1),
+    set_state(phase, synthesize, State1, State2),
+    inc_step(State2, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+handle_verify_result(Task, need_more_info(What), SolutionClause, State, Result, FinalState) :- !,
+    add_solution_attempt(SolutionClause, need_more_info(What), State, State1),
+    set_state(phase, explore, State1, State2),
+    inc_step(State2, NewState),
+    rlm_solve(Task, NewState, Result, FinalState).
+
+%% =============================================================
+%% CLAUSE EXECUTION ENGINE
+%% =============================================================
+
+execute_clause([], State, State, continue) :- !.
+
+execute_clause([Goal|Rest], State, FinalState, Result) :-
+    execute_goal(Goal, State, State1, GoalResult),
+    (GoalResult = continue ->
+        execute_clause(Rest, State1, FinalState, Result)
+    ;
+        FinalState = State1,
+        Result = GoalResult
+    ).
+
+% Execute a single goal
+execute_goal(Goal, State, State, continue) :-
+    is_builtin(Goal), !,
+    call(Goal).
+
+% Finish action
+execute_goal(finish(Answer), State, State, finished(Answer)) :- !.
+
+% Phase transitions
+execute_goal(ready_to_solve, State, State, move_to_synthesize) :- !.
+
+execute_goal(need_more_exploration(What), State, NewState, need_more_info(What)) :- !,
+    format(string(Obs), "=== Need More Info ===\n~w", [What]),
+    add_observation(Obs, State, NewState).
+
+% Retry action
+execute_goal(retry(Reason), State, State, retry(Reason)) :- !.
+
+% Store gathered information
+execute_goal(record_info(Info), State, NewState, continue) :- !,
+    add_info(Info, State, State1),
+    format(string(Obs), "=== Recorded Info ===\n~w", [Info]),
+    add_observation(Obs, State1, State2),
+    add_history(record_info(Info), Obs, State2, NewState).
+
+% Tool actions
+execute_goal(Action, State, NewState, continue) :-
+    is_tool_action(Action), !,
+    execute_tool_action(Action, State, Observation),
+    add_history(Action, Observation, State, State1),
+    add_observation(Observation, State1, NewState).
+
+% Unknown goal
+execute_goal(Goal, State, State, retry(unknown_goal(Goal))) :-
+    log(error="Unknown goal: ~w", [Goal]).
+
+%% =============================================================
+%% BUILTIN PREDICATES
+%% =============================================================
+
+is_builtin(X > Y) :- number(X), number(Y).
+is_builtin(X < Y) :- number(X), number(Y).
+is_builtin(X >= Y) :- number(X), number(Y).
+is_builtin(X =< Y) :- number(X), number(Y).
+is_builtin(_ is _).
+is_builtin(X == Y).
+is_builtin(X \== Y).
+is_builtin(X = Y).
+is_builtin(X \= Y).
+is_builtin((_ ; _)).
+is_builtin((_ -> _ ; _)).
+is_builtin((_ -> _)).
+is_builtin(\+ _).
+is_builtin(not(_)).
+is_builtin(!).
+is_builtin(member(_, _)).
+is_builtin(append(_, _, _)).
+is_builtin(length(_, _)).
+is_builtin(nth0(_, _, _)).
+is_builtin(nth1(_, _, _)).
+is_builtin(last(_, _)).
+is_builtin(reverse(_, _)).
+is_builtin(sort(_, _)).
+is_builtin(msort(_, _)).
+is_builtin(findall(_, _, _)).
+is_builtin(include(_, _, _)).
+is_builtin(exclude(_, _, _)).
+is_builtin(maplist(_, _)).
+is_builtin(maplist(_, _, _)).
+is_builtin(atom(_)).
+is_builtin(number(_)).
+is_builtin(integer(_)).
+is_builtin(float(_)).
+is_builtin(is_list(_)).
+is_builtin(string(_)).
+is_builtin(var(_)).
+is_builtin(nonvar(_)).
+is_builtin(ground(_)).
+is_builtin(compound(_)).
+is_builtin(atom_string(_, _)).
+is_builtin(atom_codes(_, _)).
+is_builtin(atom_chars(_, _)).
+is_builtin(atom_concat(_, _, _)).
+is_builtin(string_codes(_, _)).
+is_builtin(string_chars(_, _)).
+is_builtin(string_concat(_, _, _)).
+is_builtin(sub_string(_, _, _, _, _)).
+is_builtin(string_length(_, _)).
+is_builtin(split_string(_, _, _, _)).
+is_builtin(normalize_space(_, _)).
+is_builtin(upcase_atom(_, _)).
+is_builtin(downcase_atom(_, _)).
+is_builtin(format(_, _, _)).
+is_builtin(format(_, _)).
+is_builtin(functor(_, _, _)).
+is_builtin(arg(_, _, _)).
+is_builtin(_ =.. _).
+is_builtin(copy_term(_, _)).
+is_builtin(flatten(_, _)).
+is_builtin(true).
+is_builtin(fail).
+is_builtin(false).
+
+%% =============================================================
+%% TOOL ACTIONS
+%% =============================================================
+
+is_tool_action(web_search(_)).
+is_tool_action(visit_webpage(_)).
+is_tool_action(shell(_)).
+is_tool_action(run_python(_)).
+is_tool_action(write_file(_, _)).
+is_tool_action(read_file(_)).
+is_tool_action(analyze(_, _)).
+
+%% =============================================================
+%% TOOL EXECUTION
+%% =============================================================
+
+% Web search
+execute_tool_action(web_search(Query), _, Obs) :-
+    tool(websearch(Query), Result),
+    format(string(Obs), "=== Web Search: ~w ===\n~w", [Query, Result]).
+
+% Visit webpage
+execute_tool_action(visit_webpage(URL), _, Obs) :-
+    tool(visit_webpage(URL), Result),
+    format(string(Obs), "=== Webpage: ~w ===\n~w", [URL, Result]).
+
+% Shell command
+execute_tool_action(shell(Cmd), _, Obs) :-
+    tool(vm_exec(Cmd), RawResult),
+    parse_vm_output(RawResult, Result),
+    format(string(Obs), "=== Shell: ~w ===\n~w", [Cmd, Result]).
+
+% Run Python code
+execute_tool_action(run_python(Code), _, Obs) :-
+    tool(vm_exec("cat > /tmp/script.py << 'PYEOF'\n" + Code + "\nPYEOF"), _),
+    tool(vm_exec("python3 /tmp/script.py 2>&1"), RawResult),
+    parse_vm_output(RawResult, Result),
+    format(string(Obs), "=== Python Output ===\n~w", [Result]).
+
+% Write file
+execute_tool_action(write_file(Path, Content), _, Obs) :-
+    format(string(Cmd), "cat > '~w' << 'FILEEOF'\n~w\nFILEEOF", [Path, Content]),
+    tool(vm_exec(Cmd), _),
+    format(string(Obs), "=== Wrote File: ~w ===\nContent length: ~w chars", [Path, Len]),
+    string_length(Content, Len).
+
+% Read file
+execute_tool_action(read_file(Path), _, Obs) :-
+    format(string(Cmd), "cat '~w' 2>/dev/null", [Path]),
+    tool(vm_exec(Cmd), RawResult),
+    parse_vm_output(RawResult, Result),
+    (Result \= "" ->
+        format(string(Obs), "=== File: ~w ===\n~w", [Path, Result])
+    ;
+        format(string(Obs), "=== Error ===\nFile '~w' not found or empty.", [Path])
+    ).
+
+% LLM analysis
+execute_tool_action(analyze(Content, Question), _, Obs) :-
+    analyze_llm(Content, Question, Analysis),
+    format(string(Obs), "=== Analysis ===\nQ: ~w\n\n~w", [Question, Analysis]).
+
+% Parse VM output
+parse_vm_output(RawOutput, Output) :-
+    (sub_string(RawOutput, Before, _, _, "Command output:\n") ->
+        string_length("Command output:\n", MarkerLen),
+        Start is Before + MarkerLen,
+        sub_string(RawOutput, Start, _, 0, Output)
+    ;
+        Output = RawOutput
+    ).
+
+%% =============================================================
+%% LLM INTEGRATION
+%% =============================================================
+
+format_state_for_llm(State, Description) :-
+    get_state(task, State, Task),
+    get_state(step, State, Step),
+    get_state(max_iter, State, MaxIter),
+    get_state(phase, State, Phase),
+    get_state(gathered_info, State, Infos),
+    get_state(history, State, History),
+    get_state(failures, State, Failures),
+    get_state(solution_attempts, State, Attempts),
+    
+    format_history_for_llm(History, HistoryStr),
+    format_failures_for_llm(Failures, FailuresStr),
+    format_infos(Infos, InfosStr),
+    format_attempts(Attempts, AttemptsStr),
+    
+    format(string(Description), 
+"Task: ~w
+Step: ~w / ~w
+Phase: ~w
+
+=== Gathered Information ===
+~w
+
+=== Previous Solution Attempts ===
+~w
+
+=== History ===
+~w
+
+=== Failures (avoid these!) ===
+~w", [Task, Step, MaxIter, Phase, InfosStr, AttemptsStr, HistoryStr, FailuresStr]).
+
+format_history_for_llm([], "No actions taken yet.").
+format_history_for_llm(History, Str) :-
+    History \= [],
+    format_history_entries(History, Entries),
+    atomic_list_concat(Entries, "\n\n", Str).
+
+format_history_entries([], []).
+format_history_entries([entry(Id, Action, Obs)|Rest], [Entry|RestEntries]) :-
+    string_length(Obs, Len),
+    (Len > 2000 ->
+        sub_string(Obs, 0, 2000, _, Trunc),
+        format(string(Entry), "[Step ~w] ~w\n~w...(truncated)", [Id, Action, Trunc])
+    ;
+        format(string(Entry), "[Step ~w] ~w\n~w", [Id, Action, Obs])
+    ),
+    format_history_entries(Rest, RestEntries).
+
+format_failures_for_llm([], "None").
+format_failures_for_llm(Failures, Str) :-
+    Failures \= [],
+    format_failure_entries(Failures, Entries),
+    atomic_list_concat(Entries, "\n", Str).
+
+format_failure_entries([], []).
+format_failure_entries([failure(Step, Clause, Reason)|Rest], [Entry|RestEntries]) :-
+    format(string(Entry), "Step ~w: ~w - ~w", [Step, Clause, Reason]),
+    format_failure_entries(Rest, RestEntries).
+
+format_infos([], "None gathered yet.").
+format_infos(Infos, Str) :-
+    Infos \= [],
+    format_info_list(Infos, 1, Str).
+
+format_info_list([], _, "").
+format_info_list([Info|Rest], N, Result) :-
+    format(string(Line), "~w. ~w\n", [N, Info]),
+    N1 is N + 1,
+    format_info_list(Rest, N1, RestStr),
+    atom_concat(Line, RestStr, Result).
+
+format_attempts([], "None yet.").
+format_attempts(Attempts, Str) :-
+    Attempts \= [],
+    format_attempt_list(Attempts, Str).
+
+format_attempt_list([], "").
+format_attempt_list([attempt(Step, Clause, Result)|Rest], Str) :-
+    format(string(Line), "Step ~w: ~w => ~w\n", [Step, Clause, Result]),
+    format_attempt_list(Rest, RestStr),
+    atom_concat(Line, RestStr, Str).
+
+%% =============================================================
+%% EXPLORATION PROMPT
+%% =============================================================
+
+llm_generate_exploration(Task, StateDesc, Clause) :-
+    clear_memory,
+    system("You are an RLM (Recursive Language Model) agent in the EXPLORATION phase.
+Your job is to gather information needed to solve the task.
+
+## AVAILABLE ACTIONS
+
+**Information Gathering:**
+- web_search(Query) - Search the web for information
+  Example: web_search(\"Python requests library timeout\")
+- visit_webpage(URL) - Fetch and read a webpage
+  Example: visit_webpage(\"https://docs.python.org/3/library/json.html\")
+- shell(Cmd) - Run a shell command
+  Example: shell(\"ls -la\"), shell(\"curl -s api.example.com\")
+- read_file(Path) - Read a local file
+  Example: read_file(\"/etc/hosts\")
+- run_python(Code) - Execute Python code
+  Example: run_python(\"import sys; print(sys.version)\")
+
+**Recording:**
+- record_info(Info) - Record important information for later
+  Example: record_info(\"The API endpoint is https://api.example.com/v2\")
+  Example: record_info(\"Python version is 3.11\")
+
+**Control:**
+- ready_to_solve - Signal that you have enough information to create a solution
+- retry(Reason) - Try again with explanation
+
+**Prolog Builtins (use inline):**
+- Comparisons: X > Y, X < Y, X >= Y, X =< Y, X is Y + Z
+- Equality: X = Y, X == Y, X \\= Y
+- Control: (Cond -> Then ; Else), (A ; B), \\+ Goal
+- Lists: member(X,L), append(A,B,C), length(L,N), findall(X,G,L)
+- Strings: atom_string(A,S), string_concat(A,B,C), sub_string(S,B,L,A,Sub), split_string(S,Sep,Pad,L)
+- format(string(S), Fmt, Args)
+
+## EXAMPLES
+
+**Example 1: Research a topic**
+Task: \"What is the current price of Bitcoin?\"
+[web_search(\"bitcoin price USD current\"), record_info(\"Need to find current BTC price\")]
+
+**Example 2: Gather system info**
+Task: \"Check if Python 3 is installed and what version\"
+[shell(\"python3 --version\"), record_info(\"Checking Python version\")]
+
+**Example 3: Read documentation**
+Task: \"How do I make HTTP requests in Python?\"
+[web_search(\"python http requests library tutorial\"), visit_webpage(\"https://requests.readthedocs.io/en/latest/user/quickstart/\")]
+
+**Example 4: Ready to proceed**
+After gathering enough info:
+[record_info(\"Have all needed information: API endpoint, auth method, data format\"), ready_to_solve]
+
+**Example 5: Multi-step exploration**
+[shell(\"which python3\"), run_python(\"import requests; print(requests.__version__)\"), record_info(\"Python and requests are available\")]
+
+## OUTPUT FORMAT
+A Prolog list: [goal1, goal2, ...]
+
+Output ONLY valid Prolog syntax. Strings in double quotes. No markdown."),
+    observation("Task: {Task}"),
+    observation("State:\n{StateDesc}"),
+    chat("Generate an exploration clause. What information do you need to gather? Output ONLY a Prolog list.", ResponseText),
+    parse_clause(ResponseText, Clause).
+
+%% =============================================================
+%% SOLUTION SYNTHESIS PROMPT
+%% =============================================================
+
+llm_generate_solution(Task, StateDesc, Clause) :-
+    clear_memory,
+    system("You are an RLM (Recursive Language Model) agent in the SYNTHESIS phase.
+Your job is to generate a COMPLETE solution clause that solves the task.
+
+The solution clause should be a self-contained Prolog list that:
+1. Uses the gathered information to solve the task
+2. Performs any necessary computations or actions
+3. Ends with finish(Answer) containing the final answer
+
+## AVAILABLE ACTIONS
+
+**Tools:**
+- web_search(Query) - Search for more info if needed
+- visit_webpage(URL) - Fetch a specific page
+- shell(Cmd) - Run shell commands
+- run_python(Code) - Execute Python code
+- write_file(Path, Content) - Write to a file
+- read_file(Path) - Read a file
+- analyze(Content, Question) - LLM analysis of content
+
+**Control:**
+- finish(Answer) - Complete the task with Answer
+- need_more_exploration(What) - Go back to exploration
+- retry(Reason) - Try again
+
+**Prolog Builtins:**
+- Arithmetic: X > Y, X < Y, X is Y + Z, etc.
+- Equality: X = Y, X == Y
+- Control: (Cond -> Then ; Else), (A ; B), \\+ Goal
+- Lists: member(X,L), append(A,B,C), length(L,N), findall(X,G,L), sort(L,S)
+- Strings: atom_string(A,S), string_concat(A,B,C), sub_string(S,B,L,A,Sub), split_string(S,Sep,Pad,L), format(string(S),F,A)
+- Terms: T =.. [F|Args], functor(T,F,N), arg(N,T,A)
+
+## SOLUTION EXAMPLES
+
+**Example 1: Simple answer from gathered info**
+Task: \"What is the capital of France?\"
+Gathered: [\"France is in Europe\", \"Capital cities are major cities\", \"Paris is the capital of France\"]
+Solution:
+[finish(\"The capital of France is Paris.\")]
+
+**Example 2: Computation**
+Task: \"Calculate 15% tip on $42.50\"
+Solution:
+[Amount = 42.50, TipRate = 0.15, Tip is Amount * TipRate, format(string(Answer), \"15% tip on $~2f is $~2f\", [Amount, Tip]), finish(Answer)]
+
+**Example 3: Web lookup and answer**
+Task: \"What's the weather in London?\"
+Solution:
+[web_search(\"London weather today\"), analyze(_, \"What is the current weather?\"), finish(\"Based on search results: [weather summary]\")]
+
+**Example 4: Shell command and process**
+Task: \"List all Python files in current directory\"
+Solution:
+[shell(\"find . -name '*.py' -type f\"), finish(\"Python files found in the output above.\")]
+
+**Example 5: Multi-step with Python**
+Task: \"Generate a random password\"
+Solution:
+[run_python(\"import secrets, string; chars = string.ascii_letters + string.digits + '!@#$%'; print(''.join(secrets.choice(chars) for _ in range(16)))\"), finish(\"Generated password shown above.\")]
+
+**Example 6: Complex with conditionals**
+Task: \"Check if website is up and report status\"
+Solution:
+[shell(\"curl -s -o /dev/null -w '%{http_code}' https://example.com\"), 
+ (sub_string(Output, _, _, _, \"200\") -> Status = \"UP\" ; Status = \"DOWN\"),
+ format(string(Answer), \"Website status: ~w\", [Status]),
+ finish(Answer)]
+
+**Example 7: Need more info**
+Task: \"Summarize the contents of the user's report\"
+Gathered: [\"User mentioned a report but didn't specify which file\"]
+Solution:
+[need_more_exploration(\"Need to know the file path of the report\")]
+
+## OUTPUT FORMAT
+A Prolog list: [goal1, goal2, ..., finish(Answer)]
+
+The clause MUST end with finish(Answer) to complete the task.
+Output ONLY valid Prolog syntax. Strings in double quotes. No markdown."),
+    observation("Task: {Task}"),
+    observation("State:\n{StateDesc}"),
+    chat("Generate a COMPLETE solution clause that solves the task. Must end with finish(Answer). Output ONLY a Prolog list.", ResponseText),
+    parse_clause(ResponseText, Clause).
+
+%% =============================================================
+%% HELPER PREDICATES
+%% =============================================================
+
+parse_clause(Text, Clause) :-
+    (term_string(Clause, Text), is_list(Clause) ->
+        true
+    ;
+        (term_string(Goal, Text) ->
+            Clause = [Goal]
+        ;
+            Clause = [retry(parse_error(Text))]
+        )
+    ).
+
+analyze_llm(Content, Question, Analysis) :-
+    clear_memory,
+    system("Analyze the content to answer the question. Be concise and factual."),
+    observation("Question: {Question}"),
+    observation("Content:\n{Content}"),
+    chat("Analysis:", Analysis).
+
+%% =============================================================
+%% MAIN ENTRY POINT
+%% =============================================================
+
+solve_task(Task, Result, FinalState) :-
+    initial_state(Task, State),
+    rlm_solve(Task, State, Result, FinalState).
+
+%% =============================================================
+%% AGENT ENTRY POINT
+%% =============================================================
+
+agent_main :-
+    param("task", "What would you like me to do?", Task),
+    Task \= "",
+    
+    log(task="=== RLM Agent ==="),
+    log(task="Task: ~w", [Task]),
+    
+    solve_task(Task, Result, FinalState),
+    
+    get_state(step, FinalState, Steps),
+    get_state(gathered_info, FinalState, Infos),
+    get_state(solution_attempts, FinalState, Attempts),
+    length(Infos, NumInfos),
+    length(Attempts, NumAttempts),
+    
+    end_thinking,
+    clear_memory,
+    (Result = success(Answer) ->
+        system("Present the result of the task clearly and helpfully."),
+        observation("Task: {Task}"),
+        observation("Answer: {Answer}"),
+        observation("Steps taken: {Steps}"),
+        observation("Information gathered: {NumInfos} items"),
+        observation("Solution attempts: {NumAttempts}"),
+        chat("Present the answer to the user.")
+    ;
+        Result = timeout(Reason) ->
+        format(string(Msg), "## Timeout\n\nTask did not complete after ~w steps.\nReason: ~w\n\nGathered ~w pieces of information and made ~w solution attempts.", 
+               [Steps, Reason, NumInfos, NumAttempts]),
+        answer(Msg)
+    ;
+        format(string(Msg), "## Error\n\nUnexpected result: ~w", [Result]),
+        answer(Msg)
+    ).
+
+% Fallback - show help
+agent_main :-
+    end_thinking,
+    answer("## RLM Agent
+
+A generic meta-interpreter agent that solves tasks using LLM-generated Prolog clauses.
+
+**Parameter:**
+- `task`: What you want the agent to do
+
+**Capabilities:**
+- Web search and webpage fetching
+- Shell command execution
+- Python code execution
+- File reading and writing
+- LLM-powered analysis
+
+**How it works:**
+1. **Explore**: Gathers information about the task (web search, shell commands, etc.)
+2. **Synthesize**: Creates a solution clause using gathered info
+3. **Verify**: Executes the solution; retries if it fails
+
+**Example tasks:**
+- \"What is the current Bitcoin price?\"
+- \"Check if Python 3 is installed and what packages are available\"
+- \"Generate a random secure password\"
+- \"Find information about machine learning frameworks\"
+- \"Calculate compound interest on $1000 at 5% for 10 years\"
+
+The agent generates Prolog clauses that can use:
+- Web search, webpage visits, shell commands
+- Python execution for complex computations
+- Logical reasoning with Prolog builtins
+- Self-correction when solutions fail").

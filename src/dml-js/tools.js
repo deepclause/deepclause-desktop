@@ -1085,34 +1085,45 @@ class VisitWebpageTool extends Tool {
         console.log(`[VisitWebpageTool] Max length: ${maxLength}`);
         
         try {
-            // Use Electron BrowserWindow if available
+            // Priority 1: Use Electron BrowserWindow if available (Electron app)
             if (BrowserWindow) {
                 console.log('[VisitWebpageTool] Using Electron BrowserWindow method');
                 return await this.fetchWithElectron(url, maxLength);
-            } else {
-                console.log('[VisitWebpageTool] BrowserWindow not available, using Serper fallback');
-                // Fallback to Serper API
-                return await this.fetchWithSerper(url, maxLength);
             }
+            
+            // Priority 2: Use headless Chrome/Chromium via command line (CLI mode)
+            console.log('[VisitWebpageTool] BrowserWindow not available, trying headless Chrome...');
+            try {
+                const chromeResult = await this.fetchWithHeadlessChrome(url, maxLength);
+                if (chromeResult) {
+                    return chromeResult;
+                }
+            } catch (chromeError) {
+                console.log('[VisitWebpageTool] Headless Chrome failed:', chromeError.message);
+            }
+            
+            // Priority 3: Serper API fallback
+            console.log('[VisitWebpageTool] Trying Serper API fallback...');
+            try {
+                return await this.fetchWithSerper(url, maxLength);
+            } catch (serperError) {
+                console.log('[VisitWebpageTool] Serper API failed:', serperError.message);
+            }
+            
+            // Priority 4: Simple fetch fallback
+            console.log('[VisitWebpageTool] Attempting final fallback with fetch');
+            const fallbackResponse = await fetch(url);
+            if (fallbackResponse.ok) {
+                const htmlContent = await fallbackResponse.text();
+                console.log(`[VisitWebpageTool] Fallback successful, HTML length: ${htmlContent.length}`);
+                this.streamProgress(`✅ Fallback content retrieved.`);
+                return `${truncateContent(htmlContent, maxLength)}`;
+            }
+            throw new Error(`HTTP ${fallbackResponse.status}: ${fallbackResponse.statusText}`);
+            
         } catch (error) {
             console.error("[VisitWebpageTool] Error visiting webpage:", error);
             console.error("[VisitWebpageTool] Error stack:", error.stack);
-            
-            // Final fallback: try to download the raw HTML
-            try {
-                console.log('[VisitWebpageTool] Attempting final fallback with fetch');
-                const fallbackResponse = await fetch(url);
-                if (fallbackResponse.ok) {
-                    const htmlContent = await fallbackResponse.text();
-                    console.log(`[VisitWebpageTool] Fallback successful, HTML length: ${htmlContent.length}`);
-                    this.streamProgress(`✅ Fallback content retrieved.`);
-                    return `${truncateContent(htmlContent, maxLength)}`;
-                }
-                console.error(`[VisitWebpageTool] Fallback fetch failed with status: ${fallbackResponse.status}`);
-            } catch (fallbackError) {
-                console.error("[VisitWebpageTool] Fallback failed:", fallbackError);
-            }
-
             return `Error reading URL: ${error.message}`;
         }
     }
@@ -1221,6 +1232,138 @@ class VisitWebpageTool extends Tool {
             if (window && !window.isDestroyed()) {
                 window.destroy();
                 console.log('[VisitWebpageTool] BrowserWindow destroyed');
+            }
+        }
+    }
+
+    async fetchWithHeadlessChrome(url, maxLength) {
+        console.log('[VisitWebpageTool] fetchWithHeadlessChrome: Starting');
+        this.streamProgress(`🖥️ Loading webpage with headless Chrome...`);
+        
+        // Try to find Chrome/Chromium binary
+        const chromePaths = [
+            'google-chrome',
+            'google-chrome-stable', 
+            'chromium',
+            'chromium-browser',
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/snap/bin/chromium',
+            // macOS paths
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ];
+        
+        let chromePath = null;
+        for (const path of chromePaths) {
+            try {
+                // Check if the binary exists and is executable
+                execSync(`which "${path}" 2>/dev/null || test -x "${path}"`, { encoding: 'utf-8' });
+                chromePath = path;
+                console.log(`[VisitWebpageTool] Found Chrome at: ${chromePath}`);
+                break;
+            } catch (e) {
+                // Binary not found, try next
+            }
+        }
+        
+        if (!chromePath) {
+            console.log('[VisitWebpageTool] No Chrome/Chromium binary found');
+            throw new Error('Chrome/Chromium not found on system');
+        }
+        
+        // Create a temp file for the output
+        const tempDir = process.env.TMPDIR || process.env.TMP || '/tmp';
+        const outputFile = path.join(tempDir, `chrome_output_${Date.now()}.html`);
+        
+        try {
+            this.streamProgress(`🌐 Loading ${url}...`);
+            
+            // Use Chrome in headless mode to dump DOM after JavaScript execution
+            // --dump-dom outputs the DOM after JS execution
+            const chromeCmd = `"${chromePath}" --headless --disable-gpu --no-sandbox --disable-dev-shm-usage --virtual-time-budget=5000 --dump-dom "${url}" 2>/dev/null`;
+            
+            console.log(`[VisitWebpageTool] Running Chrome command...`);
+            const html = execSync(chromeCmd, { 
+                encoding: 'utf-8', 
+                maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+                timeout: 30000 // 30 second timeout
+            });
+            
+            console.log(`[VisitWebpageTool] Chrome returned HTML, length: ${html?.length || 0}`);
+            
+            if (!html || html.length < 100) {
+                throw new Error('Chrome returned empty or minimal content');
+            }
+            
+            this.streamProgress(`📄 Extracting page content...`);
+            
+            // Extract title from HTML
+            let title = 'No title found';
+            const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+            if (titleMatch) {
+                title = titleMatch[1].trim();
+            }
+            console.log(`[VisitWebpageTool] Title extracted: ${title}`);
+            
+            this.streamProgress(`📝 Extracted: "${title}"`);
+            
+            // Convert HTML to Markdown if Turndown is available
+            let content;
+            if (TurndownService) {
+                console.log('[VisitWebpageTool] Converting HTML to Markdown with Turndown...');
+                this.streamProgress(`🔄 Converting HTML to Markdown...`);
+                
+                const turndownService = new TurndownService({
+                    headingStyle: 'atx',
+                    codeBlockStyle: 'fenced',
+                });
+                
+                // Remove style tags and their content
+                turndownService.remove(['style', 'script', 'noscript', 'iframe']);
+                
+                // Add rule to strip all style and class attributes
+                turndownService.addRule('removeStyleAttributes', {
+                    filter: function (node) {
+                        return node.hasAttribute && (node.hasAttribute('style') || node.hasAttribute('class'));
+                    },
+                    replacement: function (content, node) {
+                        if (node.removeAttribute) {
+                            node.removeAttribute('style');
+                            node.removeAttribute('class');
+                        }
+                        return content;
+                    }
+                });
+                
+                content = turndownService.turndown(html);
+                console.log(`[VisitWebpageTool] Markdown conversion complete, length: ${content.length}`);
+                this.streamProgress(`✅ Converted to Markdown (${Math.round(content.length / 1024)}KB)`);
+            } else {
+                console.log('[VisitWebpageTool] TurndownService not available, using raw HTML');
+                content = html;
+                this.streamProgress(`✅ HTML content retrieved (${Math.round(content.length / 1024)}KB)`);
+            }
+            
+            const result = `URL: ${url}\nTitle: ${title}\n\n${truncateContent(content, maxLength)}`;
+            console.log(`[VisitWebpageTool] Final result length: ${result.length}`);
+            this.streamProgress(`✅ Page content ready (via headless Chrome)`);
+            return result;
+            
+        } catch (error) {
+            console.error('[VisitWebpageTool] Error in fetchWithHeadlessChrome:', error);
+            this.streamProgress(`⚠️ Headless Chrome failed: ${error.message}`);
+            throw error;
+        } finally {
+            // Clean up temp file if it exists
+            try {
+                if (fs.existsSync(outputFile)) {
+                    fs.unlinkSync(outputFile);
+                }
+            } catch (e) {
+                // Ignore cleanup errors
             }
         }
     }
