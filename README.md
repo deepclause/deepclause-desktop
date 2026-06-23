@@ -1,3 +1,5 @@
+## This repository is not maintained anymore, please go to  [deepclause/deepclause-sdk](https://github.com/deepclause/deepclause-sdk)  for the latest version of deepclause.
+
 # DeepClause - A Neurosymbolic AI System
 
 <p align="center">
